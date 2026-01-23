@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EUR/USD 1-Minute Auto-Learning Trader</title>
+    <title>EUR/USD 2-Minute Auto-Learning Trader</title>  <!-- ⭐ Changed to 2-Minute -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
@@ -16,11 +16,12 @@
             <div class="col-12">
                 <div class="card trading-card">
                     <div class="card-body text-center">
-                        <h1 class="text-warning mb-2"><i class="bi bi-graph-up-arrow"></i> EUR/USD 1-Minute Auto-Learning Trading System</h1>
+                        <h1 class="text-warning mb-2"><i class="bi bi-graph-up-arrow"></i> EUR/USD 2-Minute Auto-Learning Trading System</h1>  <!-- ⭐ 2-Minute -->
                         <p class="text-light mb-0">
-                            <i class="bi bi-clock"></i> Predictions every 60 seconds • 
+                            <i class="bi bi-clock"></i> Predictions every 120 seconds •  <!-- ⭐ 120 seconds -->
                             <i class="bi bi-cpu"></i> ML-Optimized TP/SL • 
                             <i class="bi bi-cash-coin"></i> Real-time Virtual Trading
+                            <span class="badge bg-success ms-2">API-Safe: 720 calls/day</span>  <!-- ⭐ Added API-Safe badge -->
                         </p>
                     </div>
                 </div>
@@ -41,15 +42,19 @@
                             <span class="fs-5 fw-bold text-info" id="cycleCount">0</span>
                         </div>
                         <div class="d-flex justify-content-between mb-3">
+                            <span>Cycle Duration:</span>
+                            <span class="fs-5 fw-bold text-info" id="cycleDuration">120s</span>  <!-- ⭐ Added Cycle Duration -->
+                        </div>
+                        <div class="d-flex justify-content-between mb-3">
                             <span>Next Cycle In:</span>
-                            <span class="fs-5 fw-bold" id="nextCycle">60s</span>
+                            <span class="fs-5 fw-bold" id="nextCycle">120s</span>  <!-- ⭐ 120s -->
                         </div>
                         <div class="mb-3">
                             <div class="progress" style="height: 15px;">
                                 <div id="cycleProgress" class="progress-bar progress-bar-striped progress-bar-animated bg-info" 
                                      role="progressbar" style="width: 0%">0%</div>
                             </div>
-                            <small class="text-muted mt-1 d-block text-center">Cycle Progress</small>
+                            <small class="text-muted mt-1 d-block text-center">Cycle Progress (120 seconds)</small>  <!-- ⭐ 120 seconds -->
                         </div>
                         <div class="d-flex justify-content-between">
                             <span>Last Update:</span>
@@ -81,6 +86,12 @@
                             </div>
                         </div>
                         <div class="row text-start mt-2">
+                            <div class="col-6">API Calls/Day:</div>
+                            <div class="col-6 text-end">
+                                <span id="apiCalls" class="badge bg-info">720 (SAFE)</span>  <!-- ⭐ Added API calls -->
+                            </div>
+                        </div>
+                        <div class="row text-start mt-2">
                             <div class="col-6">Server Time:</div>
                             <div class="col-6 text-end" id="serverTime">-</div>
                         </div>
@@ -92,7 +103,7 @@
             <div class="col-md-3">
                 <div class="card trading-card h-100">
                     <div class="card-header bg-warning">
-                        <h5 class="mb-0"><i class="bi bi-lightbulb"></i> 1-Minute Prediction</h5>
+                        <h5 class="mb-0"><i class="bi bi-lightbulb"></i> 2-Minute Prediction</h5>  <!-- ⭐ 2-Minute -->
                     </div>
                     <div class="card-body text-center">
                         <div class="mb-4">
@@ -140,6 +151,10 @@
                             </div>
                         </div>
                         <div class="row mb-2">
+                            <div class="col-6">Cycle Duration:</div>
+                            <div class="col-6 text-end fw-bold" id="cycleDurationStat">120s</div>  <!-- ⭐ Added -->
+                        </div>
+                        <div class="row mb-2">
                             <div class="col-6">Prediction Accuracy:</div>
                             <div class="col-6 text-end" id="predictionAccuracy">0%</div>
                         </div>
@@ -155,9 +170,10 @@
                 <div class="card trading-card h-100">
                     <div class="card-header bg-dark">
                         <div class="d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="bi bi-graph-up"></i> Live Trading Chart</h5>
+                            <h5 class="mb-0"><i class="bi bi-graph-up"></i> Live Trading Chart (2-Minute View)</h5>  <!-- ⭐ 2-Minute -->
                             <div>
                                 <span class="badge bg-warning me-2" id="chartStatus">Loading...</span>
+                                <span class="badge bg-info me-2" id="chartTimeframe">120s</span>  <!-- ⭐ Added timeframe -->
                                 <button id="toggleChart" class="btn btn-sm btn-outline-light">
                                     <i class="bi bi-arrows-angle-expand"></i>
                                 </button>
@@ -175,13 +191,13 @@
                 <!-- Active Trade -->
                 <div class="card trading-card mb-3">
                     <div class="card-header bg-danger">
-                        <h5 class="mb-0"><i class="bi bi-activity"></i> Active Trade</h5>
+                        <h5 class="mb-0"><i class="bi bi-activity"></i> Active Trade (2-Minute)</h5>  <!-- ⭐ 2-Minute -->
                     </div>
                     <div class="card-body" id="activeTrade">
                         <div class="text-center text-muted py-4">
                             <i class="bi bi-hourglass-split display-4 d-block mb-3"></i>
                             <span class="fs-5">No active trade</span>
-                            <p class="small mt-2">Waiting for next trading signal...</p>
+                            <p class="small mt-2">Waiting for next 2-minute trading signal...</p>  <!-- ⭐ 2-minute -->
                         </div>
                     </div>
                 </div>
@@ -189,12 +205,16 @@
                 <!-- TP/SL Levels -->
                 <div class="card trading-card">
                     <div class="card-header bg-secondary">
-                        <h5 class="mb-0"><i class="bi bi-bullseye"></i> TP/SL Levels</h5>
+                        <h5 class="mb-0"><i class="bi bi-bullseye"></i> TP/SL Levels (2-Minute)</h5>  <!-- ⭐ 2-Minute -->
                     </div>
                     <div class="card-body">
                         <div class="row mb-3">
                             <div class="col-12 text-center mb-3">
                                 <div class="d-inline-block p-3 rounded bg-dark">
+                                    <small class="text-muted d-block">Cycle Duration</small>
+                                    <span id="cycleTime" class="fs-4 fw-bold">120s</span>  <!-- ⭐ Added cycle time -->
+                                </div>
+                                <div class="d-inline-block p-3 rounded bg-dark ms-2">
                                     <small class="text-muted d-block">Risk/Reward</small>
                                     <span id="riskReward" class="fs-4 fw-bold">1:2</span>
                                 </div>
@@ -230,6 +250,9 @@
                                     <button id="refreshBtn" class="btn btn-info">
                                         <i class="bi bi-arrow-repeat"></i> Refresh Now
                                     </button>
+                                    <button id="apiStatusBtn" class="btn btn-outline-info btn-sm">
+                                        <i class="bi bi-shield-check"></i> API Status
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -244,10 +267,11 @@
                 <div class="card trading-card">
                     <div class="card-header">
                         <div class="d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="bi bi-clock-history"></i> Trade History</h5>
+                            <h5 class="mb-0"><i class="bi bi-clock-history"></i> Trade History (2-Minute Cycles)</h5>  <!-- ⭐ 2-Minute -->
                             <div>
                                 <span class="badge bg-dark me-2">Total: <span id="totalHistoryTrades">0</span></span>
                                 <span class="badge bg-success">Wins: <span id="totalWins">0</span></span>
+                                <span class="badge bg-info ms-2">Cycle: 120s</span>  <!-- ⭐ Added cycle badge -->
                             </div>
                         </div>
                     </div>
@@ -280,7 +304,7 @@
                         </div>
                     </div>
                     <div class="card-footer text-muted text-center">
-                        <small>Showing last 20 trades • Complete history saved to training_data.json</small>
+                        <small>Showing last 20 trades • Complete history saved to training_data.json • 2-Minute Cycles</small>  <!-- ⭐ 2-Minute -->
                     </div>
                 </div>
             </div>
@@ -291,10 +315,11 @@
             <div class="col-12">
                 <div class="text-center text-muted">
                     <small>
-                        <i class="bi bi-c-circle"></i> 2024 EUR/USD Auto-Learning Trading System • 
+                        <i class="bi bi-c-circle"></i> 2024 EUR/USD 2-Minute Auto-Learning Trading System •  <!-- ⭐ 2-Minute -->
                         <span id="systemStatus" class="badge bg-success">System Active</span> • 
+                        <span id="cycleInfo" class="badge bg-info">120s Cycles</span> •  <!-- ⭐ Added cycle info -->
                         Auto-refresh: <span id="autoRefreshStatus" class="badge bg-info">Enabled</span> • 
-                        Version 1.0.0
+                        Version 2.0
                     </small>
                 </div>
             </div>
@@ -310,7 +335,7 @@
     <script>
         // Initialize when page loads
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('EUR/USD Trading System initialized');
+            console.log('EUR/USD 2-Minute Trading System initialized');  // ⭐ 2-Minute
             
             // Set up auto-refresh
             startAutoRefresh();
@@ -321,6 +346,16 @@
             // Initial data fetch
             fetchTradingState();
             fetchTradeHistory();
+            
+            // Set cycle duration display
+            updateElementText('cycleDuration', '120s');
+            updateElementText('cycleDurationStat', '120s');
+            updateElementText('cycleTime', '120s');
+            updateElementText('chartTimeframe', '120s');
+            updateElementText('cycleInfo', '120s Cycles');
+            
+            // Set API calls info
+            updateElementText('apiCalls', '720 (SAFE)');
         });
     </script>
 </body>
