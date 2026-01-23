@@ -1,0 +1,10 @@
+Flask
+pandas
+numpy
+pandas-ta
+plotly
+requests
+scikit-learn
+threading6
+python-dateutil
+gunicorn
