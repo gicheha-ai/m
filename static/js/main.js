@@ -1,24 +1,23 @@
 /**
  * EUR/USD Trading System - Main JavaScript Module
- * Updated for 2-Minute Cycles
+ * Fixed for 2-Minute Cycles
  */
 
 // Configuration
 const API_BASE_URL = '';
 const REFRESH_INTERVAL = 2000; // 2 seconds
 const HISTORY_REFRESH_INTERVAL = 5000; // 5 seconds
-const CYCLE_DURATION = 120; // ⭐ Changed from 60 to 120 seconds
+const CYCLE_DURATION = 120; // ⭐ FIXED: 120 seconds for 2 minutes
 
 // State
 let refreshTimer = null;
 let historyTimer = null;
 let lastUpdateTime = null;
 let isAutoRefreshEnabled = true;
-let cycleDuration = CYCLE_DURATION;
 
 // Initialize when page loads
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('EUR/USD 2-Minute Trading System Initialized');  // ⭐ 2-Minute
+    console.log('EUR/USD 2-Minute Trading System Initialized');
     
     // Initialize systems
     initializeDashboard();
@@ -37,22 +36,19 @@ document.addEventListener('DOMContentLoaded', function() {
     if (typeof initializeChartSystem === 'function') {
         initializeChartSystem();
     }
-    
-    // Set cycle info
-    updateCycleInfo();
 });
 
 // Initialize dashboard elements
 function initializeDashboard() {
-    console.log('Dashboard initialized (2-Minute Cycles)');  // ⭐ 2-Minute
+    console.log('Dashboard initialized (2-Minute Cycles)');
     
     // Set initial values
     updateSystemStatus('Initializing...', 'warning');
     updateAutoRefreshStatus(true);
-    updateElementText('cycleDuration', `${cycleDuration}s`);
-    updateElementText('cycleTime', `${cycleDuration}s`);
-    updateElementText('chartTimeframe', `${cycleDuration}s`);
-    updateElementText('cycleInfo', `${cycleDuration}s Cycles`);
+    
+    // Set cycle duration displays
+    updateElementText('remainingTime', `${CYCLE_DURATION}s`);
+    updateElementText('cycleDuration', `${CYCLE_DURATION}s`);
 }
 
 // Set up all event listeners
@@ -77,14 +73,6 @@ function setupEventListeners() {
         });
     }
     
-    // API Status button
-    const apiStatusBtn = document.getElementById('apiStatusBtn');
-    if (apiStatusBtn) {
-        apiStatusBtn.addEventListener('click', function() {
-            checkApiStatus();
-        });
-    }
-    
     // Toggle auto-refresh
     const autoRefreshToggle = document.getElementById('autoRefreshToggle');
     if (autoRefreshToggle) {
@@ -102,21 +90,63 @@ function setupEventListeners() {
     }
 }
 
+// Fetch current trading state from API
+function fetchTradingState() {
+    fetch('/api/trading_state')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            updateDashboard(data);
+            updateSystemStatus('Active', 'success');
+            lastUpdateTime = new Date();
+        })
+        .catch(error => {
+            console.error('Error fetching trading state:', error);
+            updateSystemStatus('Connection Error', 'danger');
+            showToast('Failed to fetch trading data', 'error');
+        });
+}
+
+// Fetch trade history from API
+function fetchTradeHistory() {
+    fetch('/api/trade_history')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            updateTradeHistory(data);
+        })
+        .catch(error => {
+            console.error('Error fetching trade history:', error);
+        });
+}
+
 // Update dashboard with new data
 function updateDashboard(data) {
     if (!data) return;
     
     // Update cycle information
     updateElementText('cycleCount', data.cycle_count || 0);
-    updateElementText('nextCycle', `${data.next_cycle_in || cycleDuration}s`);
+    updateElementText('nextCycle', `${data.next_cycle_in || CYCLE_DURATION}s`);
     
-    // Update progress bar (scaled to 120 seconds)
+    // Update progress bars (scaled to 120 seconds)
     const cycleProgress = data.cycle_progress || 0;
     updateProgressBar('cycleProgress', cycleProgress, 'bg-info');
+    
+    const tradeProgress = data.trade_progress || 0;
+    updateElementText('tradeProgress', `${Math.round(tradeProgress)}%`);
     
     // Update time
     updateElementText('lastUpdate', data.last_update || '-');
     updateElementText('serverTime', formatTime(data.server_time));
+    updateElementText('remainingTime', `${data.remaining_time || CYCLE_DURATION}s`);
     
     // Update market data
     updateElementText('currentPrice', (data.current_price || 1.08500).toFixed(5));
@@ -133,12 +163,16 @@ function updateDashboard(data) {
         }`;
     }
     
-    // Update API calls info
-    const apiCalls = document.getElementById('apiCalls');
-    if (apiCalls) {
-        const isSafe = data.api_status === 'CONNECTED' || data.api_status === 'DEMO';
-        apiCalls.textContent = isSafe ? '720 (SAFE)' : 'Limit Exceeded';
-        apiCalls.className = `badge ${isSafe ? 'bg-success' : 'bg-danger'}`;
+    // Update signal strength
+    const signalStrength = document.getElementById('signalStrength');
+    if (signalStrength) {
+        const strength = data.signal_strength || 0;
+        signalStrength.textContent = `${strength}/3`;
+        signalStrength.className = `badge ${
+            strength === 3 ? 'bg-success' :
+            strength === 2 ? 'bg-warning' :
+            'bg-secondary'
+        }`;
     }
     
     // Update prediction
@@ -172,8 +206,6 @@ function updateDashboard(data) {
     updateElementText('balance', `$${(data.balance || 10000).toFixed(2)}`);
     updateElementText('totalTrades', data.total_trades || 0);
     updateElementText('winRate', `${(data.win_rate || 0).toFixed(1)}%`);
-    updateElementText('predictionAccuracy', `${(data.prediction_accuracy || 0).toFixed(1)}%`);
-    updateElementText('cycleDurationStat', `${cycleDuration}s`);
     
     // Update ML status
     const mlReady = document.getElementById('mlReady');
@@ -201,7 +233,7 @@ function updateDashboard(data) {
     updateActiveTrade(data.current_trade);
     
     // Update chart if available
-    if (typeof updateChartFromState === 'function') {
+    if (typeof updateChartFromState === 'function' && data.chart_data) {
         updateChartFromState(data);
     }
     
@@ -212,11 +244,6 @@ function updateDashboard(data) {
     
     // Update trade status
     updateElementText('tradeStatus', data.trade_status || 'NO_TRADE');
-    
-    // Update volatility if available
-    if (data.volatility) {
-        updateElementText('volatility', data.volatility);
-    }
 }
 
 // Update active trade display (adjusted for 120 seconds)
@@ -228,7 +255,7 @@ function updateActiveTrade(trade) {
             <div class="text-center text-muted py-4">
                 <i class="bi bi-hourglass-split display-4 d-block mb-3"></i>
                 <span class="fs-5">No active trade</span>
-                <p class="small mt-2">Waiting for next 2-minute trading signal...</p>
+                <p class="small mt-2">Waiting for next trading signal...</p>
             </div>
         `;
         return;
@@ -236,17 +263,17 @@ function updateActiveTrade(trade) {
     
     const profitPips = trade.profit_pips || 0;
     const duration = trade.duration_seconds || 0;
-    const timeRemaining = Math.max(0, cycleDuration - duration);
+    const timeRemaining = Math.max(0, CYCLE_DURATION - duration);
     const profitPercent = trade.profit_amount ? ((trade.profit_amount / trade.trade_size) * 100).toFixed(3) : '0.000';
     
     // Calculate progress percentage (based on 120 seconds)
-    const progressPercent = Math.min(100, (duration / cycleDuration) * 100);
+    const progressPercent = Math.min(100, (duration / CYCLE_DURATION) * 100);
     
     activeTradeDiv.innerHTML = `
         <div class="text-center">
             <h5 class="${trade.action === 'BUY' ? 'text-success' : 'text-danger'}">
                 <i class="bi ${trade.action === 'BUY' ? 'bi-arrow-up-circle' : 'bi-arrow-down-circle'}"></i>
-                ${trade.action} #${trade.id} (2-Minute)
+                ${trade.action} #${trade.id}
             </h5>
             
             <div class="row text-start mt-3">
@@ -269,9 +296,6 @@ function updateActiveTrade(trade) {
                 <div class="col-6"><small>Time Left:</small></div>
                 <div class="col-6 text-end"><strong>${timeRemaining}s</strong></div>
                 
-                <div class="col-6"><small>Cycle:</small></div>
-                <div class="col-6 text-end"><strong>${cycleDuration}s</strong></div>
-                
                 <div class="col-6"><small>Status:</small></div>
                 <div class="col-6 text-end">
                     <span class="badge ${trade.status === 'OPEN' ? 'bg-warning' : 'bg-secondary'}">
@@ -286,7 +310,7 @@ function updateActiveTrade(trade) {
                         profitPips >= 0 ? 'bg-success' : 'bg-danger'
                     }" style="width: ${progressPercent}%"></div>
                 </div>
-                <small class="text-muted d-block mt-1">Trade progress: ${Math.round(progressPercent)}% (${cycleDuration}s cycle)</small>
+                <small class="text-muted d-block mt-1">Trade progress: ${Math.round(progressPercent)}% (${CYCLE_DURATION}s total)</small>
             </div>
             
             <div class="mt-3">
@@ -328,7 +352,7 @@ function updateTradeHistory(data) {
     
     // Build table rows
     let html = '';
-    data.trades.slice(0, 20).reverse().forEach(trade => { // Show latest 20 trades
+    data.trades.slice().reverse().forEach(trade => {
         const entryTime = trade.entry_time ? new Date(trade.entry_time) : new Date();
         const exitTime = trade.exit_time ? new Date(trade.exit_time) : null;
         const duration = exitTime ? Math.round((exitTime - entryTime) / 1000) : 0;
@@ -372,7 +396,7 @@ function updateTradeHistory(data) {
                 <td class="${profitPips >= 0 ? 'text-success' : 'text-danger'} fw-bold">
                     ${profitPips.toFixed(1)}
                 </td>
-                <td>${duration}s/${cycleDuration}s</td>  <!-- ⭐ Added cycle duration -->
+                <td>${duration}s</td>
                 <td>
                     <span class="badge ${resultClass}">
                         ${resultText}
@@ -393,26 +417,213 @@ function updateTradeHistory(data) {
     tbody.innerHTML = html;
 }
 
-// Check API status
-function checkApiStatus() {
-    fetch('/api/api_status')
-        .then(response => response.json())
-        .then(data => {
-            showToast(`API Status: ${data.api_limits.status}`, 'info');
-            console.log('API Status:', data);
-        })
-        .catch(error => {
-            console.error('Error checking API status:', error);
-        });
+// Reset trading statistics
+function resetTrading() {
+    fetch('/api/reset_trading', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            showToast('Trading statistics reset successfully!', 'success');
+            fetchTradingState();
+            fetchTradeHistory();
+        } else {
+            showToast('Failed to reset trading', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error resetting trading:', error);
+        showToast('Error resetting trading', 'error');
+    });
 }
 
-// Update cycle information
-function updateCycleInfo() {
-    updateElementText('cycleDuration', `${cycleDuration}s`);
-    updateElementText('cycleTime', `${cycleDuration}s`);
-    updateElementText('chartTimeframe', `${cycleDuration}s`);
-    updateElementText('cycleInfo', `${cycleDuration}s Cycles`);
+// Start auto-refresh
+function startAutoRefresh() {
+    if (refreshTimer) {
+        clearInterval(refreshTimer);
+    }
+    
+    refreshTimer = setInterval(() => {
+        if (isAutoRefreshEnabled) {
+            fetchTradingState();
+        }
+    }, REFRESH_INTERVAL);
+    
+    // Separate timer for history (less frequent)
+    if (historyTimer) {
+        clearInterval(historyTimer);
+    }
+    
+    historyTimer = setInterval(() => {
+        if (isAutoRefreshEnabled) {
+            fetchTradeHistory();
+        }
+    }, HISTORY_REFRESH_INTERVAL);
+    
+    updateAutoRefreshStatus(true);
+    console.log('Auto-refresh started');
 }
+
+// Stop auto-refresh
+function stopAutoRefresh() {
+    if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+    }
+    
+    if (historyTimer) {
+        clearInterval(historyTimer);
+        historyTimer = null;
+    }
+    
+    updateAutoRefreshStatus(false);
+    console.log('Auto-refresh stopped');
+}
+
+// Toggle auto-refresh
+function toggleAutoRefresh() {
+    isAutoRefreshEnabled = !isAutoRefreshEnabled;
+    
+    if (isAutoRefreshEnabled) {
+        startAutoRefresh();
+        showToast('Auto-refresh enabled', 'info');
+    } else {
+        stopAutoRefresh();
+        showToast('Auto-refresh disabled', 'warning');
+    }
+}
+
+// Helper function to update element text
+function updateElementText(elementId, text) {
+    const element = document.getElementById(elementId);
+    if (element) {
+        element.innerHTML = text;
+    }
+}
+
+// Helper function to update progress bar
+function updateProgressBar(elementId, value, colorClass = 'bg-primary') {
+    const element = document.getElementById(elementId);
+    if (element) {
+        element.style.width = `${Math.min(100, value)}%`;
+        element.textContent = `${Math.round(value)}%`;
+        
+        // Update color class
+        element.className = `progress-bar ${colorClass}`;
+        if (value > 0 && value < 100) {
+            element.classList.add('progress-bar-striped', 'progress-bar-animated');
+        }
+    }
+}
+
+// Get color based on confidence level
+function getConfidenceColor(confidence) {
+    if (confidence >= 80) return 'bg-success';
+    if (confidence >= 60) return 'bg-info';
+    if (confidence >= 40) return 'bg-warning';
+    return 'bg-danger';
+}
+
+// Format time string
+function formatTime(dateString) {
+    if (!dateString) return '-';
+    
+    try {
+        const date = new Date(dateString);
+        return date.toLocaleTimeString([], { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            second: '2-digit'
+        });
+    } catch (e) {
+        return dateString;
+    }
+}
+
+// Update system status
+function updateSystemStatus(status, type = 'info') {
+    const element = document.getElementById('systemStatus');
+    if (element) {
+        element.textContent = status;
+        element.className = `badge bg-${type}`;
+    }
+}
+
+// Update auto-refresh status
+function updateAutoRefreshStatus(enabled) {
+    const element = document.getElementById('autoRefreshStatus');
+    if (element) {
+        element.textContent = enabled ? 'Enabled' : 'Disabled';
+        element.className = `badge ${enabled ? 'bg-success' : 'bg-secondary'}`;
+    }
+}
+
+// Show toast notification
+function showToast(message, type = 'info') {
+    // Create toast container if it doesn't exist
+    let toastContainer = document.getElementById('toastContainer');
+    if (!toastContainer) {
+        toastContainer = document.createElement('div');
+        toastContainer.id = 'toastContainer';
+        toastContainer.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+        document.body.appendChild(toastContainer);
+    }
+    
+    // Create toast element
+    const toastId = 'toast-' + Date.now();
+    const toastHtml = `
+        <div id="${toastId}" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header bg-${type} text-white">
+                <strong class="me-auto">
+                    <i class="bi ${
+                        type === 'success' ? 'bi-check-circle' :
+                        type === 'error' ? 'bi-exclamation-circle' :
+                        type === 'warning' ? 'bi-exclamation-triangle' :
+                        'bi-info-circle'
+                    }"></i>
+                    Trading System
+                </strong>
+                <small>Just now</small>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body">
+                ${message}
+            </div>
+        </div>
+    `;
+    
+    toastContainer.insertAdjacentHTML('beforeend', toastHtml);
+    
+    // Initialize and show toast
+    const toastEl = document.getElementById(toastId);
+    const toast = new bootstrap.Toast(toastEl, {
+        delay: 3000
+    });
+    toast.show();
+    
+    // Remove toast after it's hidden
+    toastEl.addEventListener('hidden.bs.toast', function () {
+        toastEl.remove();
+    });
+}
+
+// Clean up on page unload
+window.addEventListener('beforeunload', function() {
+    stopAutoRefresh();
+    
+    if (typeof stopChartUpdates === 'function') {
+        stopChartUpdates();
+    }
+});
 
 // Export functions for debugging
 window.fetchTradingState = fetchTradingState;
@@ -421,6 +632,5 @@ window.resetTrading = resetTrading;
 window.startAutoRefresh = startAutoRefresh;
 window.stopAutoRefresh = stopAutoRefresh;
 window.toggleAutoRefresh = toggleAutoRefresh;
-window.checkApiStatus = checkApiStatus;
 
 console.log('Main.js loaded successfully (2-Minute Cycle)');

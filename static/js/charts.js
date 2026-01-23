@@ -1,13 +1,13 @@
 /**
  * EUR/USD Trading System - Chart Management Module
- * Updated for 2-Minute Cycles
+ * Fixed for 2-Minute Cycles
  */
 
 let currentChart = null;
 let priceChartData = [];
 let chartUpdateInterval = null;
 let isFullscreen = false;
-const CHART_POINTS = 120; // ⭐ Changed from 60 to 120 for 2-minute chart
+const CHART_POINTS = 120; // ⭐ FIXED: 120 points for 2 minutes
 
 // Initialize chart system
 function initializeChartSystem() {
@@ -38,16 +38,16 @@ function createInitialChart() {
     console.log('Initial chart created (120-point view)');
 }
 
-// Get chart layout configuration (updated for 2-minute)
+// Get chart layout configuration
 function getChartLayout() {
     return {
         title: {
-            text: 'EUR/USD Live Price Chart (2-Minute View)',  // ⭐ 2-Minute
+            text: 'EUR/USD Live Price Chart (2-Minute View)',
             font: { size: 18, color: '#ffffff' },
             x: 0.05
         },
         xaxis: {
-            title: { text: 'Time (seconds ago - 120s view)', font: { color: '#ffffff' } },  // ⭐ 120s
+            title: { text: 'Time (seconds ago)', font: { color: '#ffffff' } },
             gridcolor: 'rgba(255, 255, 255, 0.1)',
             zerolinecolor: 'rgba(255, 255, 255, 0.2)',
             color: '#ffffff',
@@ -85,11 +85,11 @@ function getChartLayout() {
 // Get empty trace for initialization
 function getEmptyTrace() {
     return {
-        x: Array.from({length: CHART_POINTS}, (_, i) => i),  // ⭐ 120 points
+        x: Array.from({length: CHART_POINTS}, (_, i) => i),
         y: Array(CHART_POINTS).fill(1.08500),
         type: 'scatter',
         mode: 'lines',
-        name: 'EUR/USD Price (2-Min)',  // ⭐ 2-Min
+        name: 'EUR/USD Price',
         line: {
             color: '#00ff88',
             width: 3
@@ -98,218 +98,111 @@ function getEmptyTrace() {
     };
 }
 
-// Update chart with new data (adjusted for 120 points)
+// Update chart with new data
 function updateChart(priceData, indicators = {}, tradeInfo = null) {
-    if (!currentChart || !priceData || priceData.length === 0) {
-        return;
-    }
+    if (!currentChart) return;
     
     try {
-        // Ensure we have 120 points
-        const paddedPriceData = priceData.length >= CHART_POINTS 
-            ? priceData.slice(-CHART_POINTS)
-            : [...Array(CHART_POINTS - priceData.length).fill(priceData[0]), ...priceData];
+        // Prepare data for 120-point chart
+        const timePoints = Array.from({length: CHART_POINTS}, (_, i) => i);
+        let displayPrices;
         
-        // Prepare time axis (seconds ago)
-        const timePoints = Array.from({length: CHART_POINTS}, (_, i) => CHART_POINTS - i - 1);
+        if (priceData && priceData.length > 0) {
+            // If we have data, use it (pad if necessary)
+            if (priceData.length >= CHART_POINTS) {
+                displayPrices = priceData.slice(-CHART_POINTS);
+            } else {
+                // Pad with first value
+                displayPrices = [
+                    ...Array(CHART_POINTS - priceData.length).fill(priceData[0]),
+                    ...priceData
+                ];
+            }
+        } else {
+            // No data, use empty array
+            displayPrices = Array(CHART_POINTS).fill(1.08500);
+        }
         
-        // Update main price trace
+        // Create traces
         const traces = [{
             x: timePoints,
-            y: paddedPriceData,
+            y: displayPrices,
             type: 'scatter',
             mode: 'lines',
-            name: 'EUR/USD Price (2-Min)',
+            name: 'EUR/USD Price',
             line: { color: '#00ff88', width: 3 },
             hovertemplate: 'Price: %{y:.5f}<extra></extra>'
         }];
         
-        // Add moving averages if available
-        if (indicators.sma_5 && indicators.sma_5.length > 0) {
-            const sma5Data = indicators.sma_5.length >= CHART_POINTS 
-                ? indicators.sma_5.slice(-CHART_POINTS)
-                : [...Array(CHART_POINTS - indicators.sma_5.length).fill(indicators.sma_5[0]), ...indicators.sma_5];
-            
-            traces.push({
-                x: timePoints,
-                y: sma5Data,
-                type: 'scatter',
-                mode: 'lines',
-                name: 'SMA 5 (2-Min)',
-                line: { color: 'orange', width: 1.5, dash: 'dash' },
-                opacity: 0.7,
-                hovertemplate: 'SMA 5: %{y:.5f}<extra></extra>'
-            });
-        }
-        
-        if (indicators.sma_10 && indicators.sma_10.length > 0) {
-            const sma10Data = indicators.sma_10.length >= CHART_POINTS 
-                ? indicators.sma_10.slice(-CHART_POINTS)
-                : [...Array(CHART_POINTS - indicators.sma_10.length).fill(indicators.sma_10[0]), ...indicators.sma_10];
-            
-            traces.push({
-                x: timePoints,
-                y: sma10Data,
-                type: 'scatter',
-                mode: 'lines',
-                name: 'SMA 10 (2-Min)',
-                line: { color: 'cyan', width: 1.5, dash: 'dot' },
-                opacity: 0.7,
-                hovertemplate: 'SMA 10: %{y:.5f}<extra></extra>'
-            });
-        }
+        // Update chart
+        Plotly.react('chart', traces, getChartLayout());
         
         // Add trade markers if trade exists
-        const layout = getChartLayout();
-        layout.shapes = [];
-        layout.annotations = [];
-        
         if (tradeInfo) {
-            addTradeToChart(tradeInfo, timePoints, paddedPriceData, layout);
+            addTradeToChart(tradeInfo, timePoints, displayPrices);
         }
         
-        // Update chart title
-        const isDemo = document.getElementById('dataSource').textContent.includes('Cache') || 
-                       document.getElementById('dataSource').textContent.includes('Simulation');
-        layout.title.text = `EUR/USD 2-Minute Price ${isDemo ? '(Cached Data)' : ''}`;
-        
-        Plotly.react('chart', traces, layout);
-        
-        // Store latest price data
-        priceChartData = paddedPriceData;
-        
         // Update chart status
-        document.getElementById('chartStatus').textContent = '2-Min Live';
+        document.getElementById('chartStatus').textContent = 'Live';
         document.getElementById('chartStatus').className = 'badge bg-success';
-        document.getElementById('chartTimeframe').textContent = '120s';
+        
+        // Store data
+        priceChartData = displayPrices;
         
     } catch (error) {
         console.error('Chart update error:', error);
     }
 }
 
-// Add trade information to chart (adjusted for 120-second view)
-function addTradeToChart(trade, timePoints, priceData, layout) {
-    if (!trade || !trade.entry_price) return;
-    
-    const lastIndex = timePoints.length - 1;
-    const currentPrice = priceData[priceData.length - 1];
-    const tradeStartIndex = Math.max(0, lastIndex - 40);  // ⭐ Show trade starting 40 points back
-    
-    // Add entry point marker
-    layout.annotations.push({
-        x: tradeStartIndex,
-        y: trade.entry_price,
-        xref: 'x',
-        yref: 'y',
-        text: `Entry: ${trade.entry_price.toFixed(5)}`,
-        showarrow: true,
-        arrowhead: 2,
-        arrowsize: 1,
-        arrowwidth: 2,
-        arrowcolor: trade.action === 'BUY' ? '#00ff00' : '#ff0000',
-        ax: 0,
-        ay: trade.action === 'BUY' ? -40 : 40,
-        bgcolor: 'rgba(0, 0, 0, 0.8)',
-        bordercolor: trade.action === 'BUY' ? '#00ff00' : '#ff0000',
-        borderwidth: 1,
-        borderpad: 4,
-        font: { color: '#ffffff', size: 12 }
-    });
-    
-    // Add TP line (span full chart width for visibility)
-    if (trade.optimal_tp) {
-        layout.shapes.push({
-            type: 'line',
-            x0: 0,
-            y0: trade.optimal_tp,
-            x1: lastIndex,
-            y1: trade.optimal_tp,
-            line: {
-                color: '#00ff00',
-                width: 2,
-                dash: 'dash'
-            }
-        });
-        
-        layout.annotations.push({
-            x: lastIndex,
-            y: trade.optimal_tp,
-            xref: 'x',
-            yref: 'y',
-            text: `TP: ${trade.optimal_tp.toFixed(5)}`,
-            showarrow: false,
-            bgcolor: 'rgba(0, 255, 0, 0.2)',
-            bordercolor: '#00ff00',
-            borderwidth: 1,
-            borderpad: 4,
-            font: { color: '#ffffff', size: 11 }
-        });
+// Update chart from trading state data
+function updateChartFromState(tradingState) {
+    if (!tradingState || !tradingState.chart_data) {
+        // Create simple chart from price data
+        if (tradingState && tradingState.current_price) {
+            const price = tradingState.current_price;
+            const priceData = Array.from({length: CHART_POINTS}, (_, i) => {
+                // Create realistic price movement
+                const noise = (Math.random() - 0.5) * 0.0002;
+                return price + noise * (i / CHART_POINTS);
+            });
+            updateChart(priceData, {}, tradingState.current_trade);
+        }
+        return;
     }
     
-    // Add SL line
-    if (trade.optimal_sl) {
-        layout.shapes.push({
-            type: 'line',
-            x0: 0,
-            y0: trade.optimal_sl,
-            x1: lastIndex,
-            y1: trade.optimal_sl,
-            line: {
-                color: '#ff0000',
-                width: 2,
-                dash: 'dash'
-            }
-        });
+    try {
+        const chartData = JSON.parse(tradingState.chart_data);
+        Plotly.react('chart', chartData.data, chartData.layout);
         
-        layout.annotations.push({
-            x: lastIndex,
-            y: trade.optimal_sl,
-            xref: 'x',
-            yref: 'y',
-            text: `SL: ${trade.optimal_sl.toFixed(5)}`,
-            showarrow: false,
-            bgcolor: 'rgba(255, 0, 0, 0.2)',
-            bordercolor: '#ff0000',
-            borderwidth: 1,
-            borderpad: 4,
-            font: { color: '#ffffff', size: 11 }
-        });
+        // Update chart status
+        document.getElementById('chartStatus').textContent = 'Live';
+        document.getElementById('chartStatus').className = 'badge bg-success';
+        
+    } catch (error) {
+        console.log('Using dynamic chart update');
+        updateChartDynamic(tradingState);
     }
-    
-    // Add current price vs entry comparison
-    const profitPips = trade.action === 'BUY' 
-        ? (currentPrice - trade.entry_price) * 10000
-        : (trade.entry_price - currentPrice) * 10000;
-    
-    layout.annotations.push({
-        x: lastIndex,
-        y: currentPrice,
-        xref: 'x',
-        yref: 'y',
-        text: `Current: ${currentPrice.toFixed(5)}<br>P/L: ${profitPips.toFixed(1)} pips`,
-        showarrow: true,
-        arrowhead: 2,
-        arrowsize: 1,
-        arrowwidth: 2,
-        arrowcolor: profitPips >= 0 ? '#00ff00' : '#ff0000',
-        ax: -80,
-        ay: 0,
-        bgcolor: 'rgba(0, 0, 0, 0.8)',
-        bordercolor: profitPips >= 0 ? '#00ff00' : '#ff0000',
-        borderwidth: 1,
-        borderpad: 4,
-        font: { color: '#ffffff', size: 11 }
-    });
 }
 
-// Generate simulated price series for 120 seconds
+// Dynamic chart update (fallback)
+function updateChartDynamic(tradingState) {
+    if (!tradingState) return;
+    
+    // Generate price series
+    const basePrice = tradingState.current_price || 1.0850;
+    const priceSeries = generatePriceSeries(basePrice, CHART_POINTS);
+    
+    // Update chart
+    updateChart(priceSeries, {}, tradingState.current_trade);
+}
+
+// Generate simulated price series
 function generatePriceSeries(basePrice, length = CHART_POINTS) {
     const series = [basePrice];
     let currentPrice = basePrice;
     
     for (let i = 1; i < length; i++) {
-        // Simulate random walk (lower volatility for 2-min view)
+        // Simulate random walk
         const change = (Math.random() - 0.5) * 0.00015;
         currentPrice += change;
         
@@ -323,15 +216,175 @@ function generatePriceSeries(basePrice, length = CHART_POINTS) {
     return series;
 }
 
-// Update chart title with timeframe
-function updateChartTitle() {
-    if (!currentChart) return;
+// Add trade information to chart
+function addTradeToChart(trade, timePoints, priceData) {
+    if (!trade || !trade.entry_price) return;
     
-    const chartTitle = document.querySelector('.js-plotly-plot .plotly .main-svg .g-gtitle text');
-    if (chartTitle) {
-        chartTitle.textContent = `EUR/USD 2-Minute Trading Chart`;
+    try {
+        const layout = getChartLayout();
+        const lastIndex = timePoints.length - 1;
+        const currentPrice = priceData[priceData.length - 1];
+        const entryIdx = Math.max(0, lastIndex - 30);
+        
+        // Add entry point
+        layout.annotations.push({
+            x: entryIdx,
+            y: trade.entry_price,
+            xref: 'x',
+            yref: 'y',
+            text: `Entry: ${trade.entry_price.toFixed(5)}`,
+            showarrow: true,
+            arrowhead: 2,
+            arrowsize: 1,
+            arrowwidth: 2,
+            arrowcolor: trade.action === 'BUY' ? '#00ff00' : '#ff0000',
+            ax: 0,
+            ay: trade.action === 'BUY' ? -40 : 40,
+            bgcolor: 'rgba(0, 0, 0, 0.8)',
+            bordercolor: trade.action === 'BUY' ? '#00ff00' : '#ff0000',
+            borderwidth: 1,
+            borderpad: 4,
+            font: { color: '#ffffff', size: 12 }
+        });
+        
+        // Add TP line
+        if (trade.optimal_tp) {
+            layout.shapes.push({
+                type: 'line',
+                x0: 0,
+                y0: trade.optimal_tp,
+                x1: lastIndex,
+                y1: trade.optimal_tp,
+                line: {
+                    color: '#00ff00',
+                    width: 2,
+                    dash: 'dash'
+                }
+            });
+        }
+        
+        // Add SL line
+        if (trade.optimal_sl) {
+            layout.shapes.push({
+                type: 'line',
+                x0: 0,
+                y0: trade.optimal_sl,
+                x1: lastIndex,
+                y1: trade.optimal_sl,
+                line: {
+                    color: '#ff0000',
+                    width: 2,
+                    dash: 'dash'
+                }
+            });
+        }
+        
+        // Update chart with annotations
+        Plotly.relayout('chart', layout);
+        
+    } catch (error) {
+        console.error('Error adding trade to chart:', error);
     }
 }
+
+// Setup chart controls
+function setupChartControls() {
+    // Toggle fullscreen
+    const toggleChartBtn = document.getElementById('toggleChart');
+    if (toggleChartBtn) {
+        toggleChartBtn.addEventListener('click', toggleChartFullscreen);
+    }
+}
+
+// Toggle chart fullscreen
+function toggleChartFullscreen() {
+    const chartDiv = document.getElementById('chart');
+    const toggleBtn = document.getElementById('toggleChart');
+    
+    if (!isFullscreen) {
+        // Enter fullscreen
+        if (chartDiv.requestFullscreen) {
+            chartDiv.requestFullscreen();
+        } else if (chartDiv.webkitRequestFullscreen) {
+            chartDiv.webkitRequestFullscreen();
+        } else if (chartDiv.msRequestFullscreen) {
+            chartDiv.msRequestFullscreen();
+        }
+        
+        toggleBtn.innerHTML = '<i class="bi bi-arrows-angle-contract"></i>';
+        isFullscreen = true;
+    } else {
+        // Exit fullscreen
+        if (document.exitFullscreen) {
+            document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+        } else if (document.msExitFullscreen) {
+            document.msExitFullscreen();
+        }
+        
+        toggleBtn.innerHTML = '<i class="bi bi-arrows-angle-expand"></i>';
+        isFullscreen = false;
+    }
+}
+
+// Start automatic chart updates
+function startChartUpdates() {
+    if (chartUpdateInterval) {
+        clearInterval(chartUpdateInterval);
+    }
+    
+    chartUpdateInterval = setInterval(() => {
+        // Just ensure chart stays responsive
+        if (currentChart) {
+            Plotly.Plots.resize('chart');
+        }
+    }, 10000); // Check every 10 seconds
+    
+    console.log('Chart updates started');
+}
+
+// Stop chart updates
+function stopChartUpdates() {
+    if (chartUpdateInterval) {
+        clearInterval(chartUpdateInterval);
+        chartUpdateInterval = null;
+    }
+}
+
+// Handle fullscreen change
+document.addEventListener('fullscreenchange', handleFullscreenChange);
+document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+function handleFullscreenChange() {
+    const chartDiv = document.getElementById('chart');
+    const toggleBtn = document.getElementById('toggleChart');
+    
+    isFullscreen = !!(document.fullscreenElement || 
+                      document.webkitFullscreenElement || 
+                      document.mozFullScreenElement || 
+                      document.msFullscreenElement);
+    
+    if (isFullscreen) {
+        toggleBtn.innerHTML = '<i class="bi bi-arrows-angle-contract"></i>';
+        // Resize chart for fullscreen
+        setTimeout(() => Plotly.Plots.resize(chartDiv), 100);
+    } else {
+        toggleBtn.innerHTML = '<i class="bi bi-arrows-angle-expand"></i>';
+        // Resize chart back
+        setTimeout(() => Plotly.Plots.resize(chartDiv), 100);
+    }
+}
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', function() {
+    stopChartUpdates();
+    if (currentChart) {
+        Plotly.purge('chart');
+    }
+});
 
 // Export functions for use in main.js
 window.initializeChartSystem = initializeChartSystem;
@@ -339,6 +392,5 @@ window.updateChartFromState = updateChartFromState;
 window.updateChart = updateChart;
 window.startChartUpdates = startChartUpdates;
 window.stopChartUpdates = stopChartUpdates;
-window.updateChartTitle = updateChartTitle;
 
 console.log('Charts.js loaded successfully (2-Minute Cycle)');
