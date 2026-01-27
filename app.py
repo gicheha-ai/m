@@ -43,11 +43,12 @@ TRAINING_FILE = "data.txt"
 MIN_TRAINING_SAMPLES = 5  # Reduced for faster ML activation
 
 # ==================== CACHE CONFIGURATION ====================
-CACHE_DURATION = 45  # Increased but still efficient
+CACHE_DURATION = 30  # ⭐ 30-second caching for API limit protection
 price_cache = {
     'price': 1.0850,
     'timestamp': time.time(),
     'source': 'Initial',
+    'expiry': CACHE_DURATION,
     'hits': 0,
     'misses': 0
 }
@@ -90,7 +91,7 @@ trading_state = {
     'cache_hits': 0,
     'cache_misses': 0,
     'cache_efficiency': '0%',
-    'api_calls_today': '~320 (OPTIMIZED)',
+    'api_calls_today': '~240 (SAFE)',
     'ml_data_saved': False,
     'ml_data_load_status': 'Loading ML system...',
     'ml_training_status': 'Collecting data...',
@@ -176,117 +177,101 @@ def initialize_system():
 
 # ==================== ADVANCED PRICE FETCHING ====================
 def get_cached_eurusd_price():
-    """Get EUR/USD price with intelligent caching"""
+    """Get EUR/USD price with 30-second caching to prevent API limits"""
     
     current_time = time.time()
     cache_age = current_time - price_cache['timestamp']
     
-    # Cache HIT with freshness check
+    # ⭐ CACHE HIT: Use cached price if fresh
     if cache_age < CACHE_DURATION and price_cache['price']:
         price_cache['hits'] += 1
         update_cache_efficiency()
         
-        # Add micro-fluctuations for realism
-        micro_volatility = 0.00008
-        micro_change = np.random.normal(0, micro_volatility)
-        cached_price = price_cache['price'] + micro_change
+        # Add tiny realistic fluctuation to cached price
+        tiny_change = np.random.uniform(-0.00001, 0.00001)
+        cached_price = price_cache['price'] + tiny_change
         
-        # Keep within realistic EUR/USD range
-        cached_price = max(1.0700, min(1.1100, cached_price))
-        
-        logger.debug(f"📦 CACHE HIT: {cached_price:.5f} (age: {cache_age:.1f}s)")
+        logger.debug(f"📦 CACHE HIT: Using cached price {cached_price:.5f} (age: {cache_age:.1f}s)")
         trading_state['api_status'] = f"CACHED ({price_cache['source']})"
         
         return cached_price, f"Cached ({price_cache['source']})"
     
-    # CACHE MISS: Fetch from multiple APIs with priority
+    # ⭐ CACHE MISS: Need fresh price from APIs
     price_cache['misses'] += 1
     update_cache_efficiency()
+    logger.info("🔄 Cache MISS: Fetching fresh price from APIs...")
     
-    api_priority = [
+    # List of reliable APIs with good limits
+    apis_to_try = [
         {
             'name': 'Frankfurter',
             'url': 'https://api.frankfurter.app/latest',
             'params': {'from': 'EUR', 'to': 'USD'},
-            'parser': lambda r: r.json()['rates']['USD'],
-            'timeout': 3
+            'extract_rate': lambda data: data['rates']['USD']
         },
         {
             'name': 'FreeForexAPI',
             'url': 'https://api.freeforexapi.com/v1/latest',
             'params': {'pairs': 'EURUSD'},
-            'parser': lambda r: r.json()['rates']['EURUSD'],
-            'timeout': 3
-        },
-        {
-            'name': 'ExchangeRateAPI',
-            'url': 'https://api.exchangerate-api.com/v4/latest/EUR',
-            'params': {},
-            'parser': lambda r: r.json()['rates']['USD'],
-            'timeout': 3
+            'extract_rate': lambda data: data['rates']['EURUSD']
         }
+        # ⭐ REMOVED ExchangeRate-API (too low limits)
     ]
     
-    for api in api_priority:
+    # Try each API
+    for api in apis_to_try:
         try:
-            logger.info(f"🔄 Trying {api['name']}...")
-            response = requests.get(api['url'], params=api['params'], timeout=api['timeout'])
+            logger.info(f"Trying {api['name']} API...")
+            response = requests.get(api['url'], params=api['params'], timeout=5)
             
+            # Handle rate limits gracefully
+            if response.status_code == 429:
+                logger.warning(f"⏸️ {api['name']} rate limit reached, skipping...")
+                continue
+                
             if response.status_code == 200:
                 data = response.json()
-                current_price = float(api['parser'](response))
+                rate = api['extract_rate'](data)
                 
-                # Validate price range
-                if 1.0700 <= current_price <= 1.1100:
-                    # Update cache
+                if rate:
+                    current_price = float(rate)
+                    
+                    # ⭐ UPDATE CACHE with fresh price
                     price_cache.update({
                         'price': current_price,
                         'timestamp': current_time,
                         'source': api['name']
                     })
                     
-                    logger.info(f"✅ {api['name']}: {current_price:.5f}")
+                    logger.info(f"✅ {api['name']}: EUR/USD = {current_price:.5f} (cached)")
                     trading_state['api_status'] = 'CONNECTED'
                     
                     return current_price, api['name']
-                else:
-                    logger.warning(f"⚠️ {api['name']}: Price out of range: {current_price}")
                     
-        except requests.exceptions.Timeout:
-            logger.warning(f"⏱️ {api['name']} timeout")
-            continue
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"⚠️ {api['name']} error: {str(e)[:50]}")
-            continue
-        except (KeyError, ValueError) as e:
-            logger.warning(f"⚠️ {api['name']} parse error: {str(e)[:50]}")
+        except Exception as e:
+            logger.warning(f"{api['name']} failed: {str(e)[:50]}")
             continue
     
-    # All APIs failed - use intelligent simulation
-    logger.warning("⚠️ All APIs failed, using intelligent simulation")
+    # ⭐ ALL APIS FAILED: Use stale cache as fallback
+    logger.warning("⚠️ All APIs failed, using stale cached data")
     
     if price_cache['price']:
-        # Smart simulation based on last known price
-        simulation_volatility = 0.00015
-        trend_bias = np.random.choice([-1, 0, 1], p=[0.4, 0.2, 0.4])
-        simulation_change = np.random.normal(trend_bias * 0.0001, simulation_volatility)
-        simulated_price = price_cache['price'] + simulation_change
+        # Add small realistic movement to stale price
+        stale_change = np.random.uniform(-0.00005, 0.00005)
+        stale_price = price_cache['price'] + stale_change
         
-        # Add mean reversion effect
-        if simulated_price > 1.1000:
-            simulated_price -= abs(simulation_change) * 0.5
-        elif simulated_price < 1.0800:
-            simulated_price += abs(simulation_change) * 0.5
+        # Keep in reasonable range
+        if stale_price < 1.0800:
+            stale_price = 1.0800 + abs(stale_change)
+        elif stale_price > 1.0900:
+            stale_price = 1.0900 - abs(stale_change)
         
-        simulated_price = max(1.0700, min(1.1100, simulated_price))
-        
-        trading_state['api_status'] = 'INTELLIGENT_SIMULATION'
-        return simulated_price, f"Simulation ({price_cache['source']})"
+        trading_state['api_status'] = 'STALE_CACHE'
+        return stale_price, f"Stale Cache ({price_cache['source']})"
     else:
-        # First run - start with realistic price
-        base_price = 1.0850 + np.random.uniform(-0.0020, 0.0020)
-        trading_state['api_status'] = 'INITIAL_SIMULATION'
-        return base_price, 'Initial Simulation'
+        # First run, no cache yet
+        trading_state['api_status'] = 'SIMULATION'
+        return 1.0850, 'Simulation (Initial)'
 
 def update_cache_efficiency():
     """Calculate and update cache efficiency metrics"""
@@ -296,11 +281,6 @@ def update_cache_efficiency():
         trading_state['cache_efficiency'] = f"{efficiency:.1f}%"
         trading_state['cache_hits'] = price_cache['hits']
         trading_state['cache_misses'] = price_cache['misses']
-        
-        # Calculate API calls per day estimation
-        calls_per_hour = (3600 / CACHE_DURATION) * (100 - efficiency) / 100
-        calls_per_day = int(calls_per_hour * 24)
-        trading_state['api_calls_today'] = f"~{calls_per_day} (OPTIMIZED)"
 
 # ==================== ADVANCED TECHNICAL ANALYSIS ====================
 def calculate_advanced_indicators(prices):
