@@ -20,9 +20,23 @@
                         <p class="text-light mb-0">
                             <i class="bi bi-clock"></i> Predictions every 120 seconds • 
                             <i class="bi bi-cpu"></i> ML-Optimized TP/SL • 
+                            <i class="bi bi-file-earmark-text"></i> data.txt Training • 
                             <i class="bi bi-cash-coin"></i> Real-time Virtual Trading
                         </p>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Message Banner -->
+        <div class="row mb-3">
+            <div class="col-12">
+                <div id="systemMessage" class="alert alert-info d-flex align-items-center justify-content-between" role="alert">
+                    <div>
+                        <i class="bi bi-info-circle me-2"></i>
+                        <span id="messageText">System initialized. Loading trading data...</span>
+                    </div>
+                    <button type="button" class="btn-close" onclick="hideMessage()"></button>
                 </div>
             </div>
         </div>
@@ -168,19 +182,23 @@
                             <h5 class="mb-0"><i class="bi bi-graph-up"></i> Live Trading Chart (2-Minute View)</h5>
                             <div>
                                 <span class="badge bg-warning me-2" id="chartStatus">Loading...</span>
-                                <button id="toggleChart" class="btn btn-sm btn-outline-light">
+                                <button id="toggleChart" class="btn btn-sm btn-outline-light" title="Toggle Fullscreen">
                                     <i class="bi bi-arrows-angle-expand"></i>
+                                </button>
+                                <button id="exportChart" class="btn btn-sm btn-outline-light ms-2" title="Export Chart Data">
+                                    <i class="bi bi-download"></i>
                                 </button>
                             </div>
                         </div>
                     </div>
-                    <div class="card-body p-0">
+                    <div class="card-body p-0 position-relative">
                         <div id="chart" style="height: 450px; width: 100%;"></div>
+                        <div id="chartStatusIndicator" class="chart-status-indicator"></div>
                     </div>
                 </div>
             </div>
 
-            <!-- Active Trade & TP/SL -->
+            <!-- Active Trade & Controls -->
             <div class="col-md-4">
                 <!-- Active Trade -->
                 <div class="card trading-card mb-3">
@@ -197,7 +215,7 @@
                 </div>
 
                 <!-- TP/SL Levels -->
-                <div class="card trading-card">
+                <div class="card trading-card mb-3">
                     <div class="card-header bg-secondary">
                         <h5 class="mb-0"><i class="bi bi-bullseye"></i> TP/SL Levels</h5>
                     </div>
@@ -234,28 +252,63 @@
                                 <span class="badge bg-danger">0 pips</span>
                             </div>
                         </div>
-                        <hr>
-                        <div class="row mt-3">
-                            <div class="col-12">
-                                <div class="d-grid gap-2">
-                                    <button id="resetBtn" class="btn btn-warning">
-                                        <i class="bi bi-arrow-clockwise"></i> Reset Trading
-                                    </button>
-                                    <button id="refreshBtn" class="btn btn-info">
-                                        <i class="bi bi-arrow-repeat"></i> Refresh Now
-                                    </button>
-                                </div>
+                    </div>
+                </div>
+
+                <!-- ML System Control Panel -->
+                <div class="card trading-card">
+                    <div class="card-header bg-info">
+                        <h5 class="mb-0"><i class="bi bi-cpu"></i> ML System Control</h5>
+                    </div>
+                    <div class="card-body">
+                        <!-- ML Status Messages -->
+                        <div id="mlDataMessage" class="alert alert-sm mb-2 py-1 text-center" style="display: none;"></div>
+                        <div id="mlTrainingMessage" class="alert alert-sm mb-2 py-1 text-center" style="display: none;"></div>
+                        <div id="mlCorrectionsMessage" class="alert alert-sm mb-3 py-1 text-center" style="display: none;"></div>
+
+                        <!-- ML Status Info -->
+                        <div class="row mb-2">
+                            <div class="col-6">Training File:</div>
+                            <div class="col-6 text-end">
+                                <code>data.txt</code>
                             </div>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-6">Data Samples:</div>
+                            <div class="col-6 text-end fw-bold" id="trainingSamples">0</div>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-6">Corrections:</div>
+                            <div class="col-6 text-end fw-bold" id="mlCorrectionsApplied">0</div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-12">
+                                <small class="text-muted" id="mlTrainingStatus">Waiting for data...</small>
+                            </div>
+                        </div>
+
+                        <!-- Control Buttons -->
+                        <div class="d-grid gap-2">
+                            <button id="viewMLData" class="btn btn-outline-info">
+                                <i class="bi bi-file-earmark-text"></i> View ML Data
+                            </button>
+                            <button id="forceMLTraining" class="btn btn-outline-warning">
+                                <i class="bi bi-gear"></i> Force ML Training
+                            </button>
+                            <button id="resetTrading" class="btn btn-outline-danger">
+                                <i class="bi bi-arrow-clockwise"></i> Reset Trading
+                            </button>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Bottom Row: Trade History -->
+        <!-- Bottom Row: Trade History and Cache Status -->
         <div class="row">
-            <div class="col-12">
-                <div class="card trading-card">
+            <!-- Trade History -->
+            <div class="col-md-8">
+                <div class="card trading-card h-100">
                     <div class="card-header">
                         <div class="d-flex justify-content-between align-items-center">
                             <h5 class="mb-0"><i class="bi bi-clock-history"></i> Trade History</h5>
@@ -294,7 +347,74 @@
                         </div>
                     </div>
                     <div class="card-footer text-muted text-center">
-                        <small>Showing last 10 trades • Complete history saved to training_data.json • 120-second cycles</small>
+                        <small>Showing last 10 trades • Complete history saved to data.txt • 120-second cycles</small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cache and API Status -->
+            <div class="col-md-4">
+                <div class="card trading-card h-100">
+                    <div class="card-header bg-dark">
+                        <h5 class="mb-0"><i class="bi bi-speedometer2"></i> Performance & Cache</h5>
+                    </div>
+                    <div class="card-body">
+                        <h6 class="text-warning mb-3"><i class="bi bi-database"></i> Cache Status</h6>
+                        <div class="row mb-2">
+                            <div class="col-6">Cache Hits:</div>
+                            <div class="col-6 text-end fw-bold" id="cacheHits">0</div>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-6">Cache Misses:</div>
+                            <div class="col-6 text-end fw-bold" id="cacheMisses">0</div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-6">Efficiency:</div>
+                            <div class="col-6 text-end fw-bold" id="cacheEfficiency">0%</div>
+                        </div>
+
+                        <h6 class="text-warning mb-3"><i class="bi bi-shield-check"></i> API Protection</h6>
+                        <div class="row mb-2">
+                            <div class="col-6">API Calls/Day:</div>
+                            <div class="col-6 text-end">
+                                <span id="apiCallsToday" class="badge bg-success">~240 (SAFE)</span>
+                            </div>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-6">Cache Duration:</div>
+                            <div class="col-6 text-end">30s</div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-6">Auto-refresh:</div>
+                            <div class="col-6 text-end">
+                                <div class="form-check form-switch d-inline-block">
+                                    <input class="form-check-input" type="checkbox" id="autoRefreshToggle" checked>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- System Controls -->
+                        <div class="mt-4 pt-3 border-top">
+                            <div class="d-grid gap-2">
+                                <button id="refreshBtn" class="btn btn-outline-primary">
+                                    <i class="bi bi-arrow-repeat"></i> Refresh Dashboard
+                                </button>
+                                <div class="btn-group" role="group">
+                                    <button id="manualBuy" class="btn btn-outline-success">
+                                        <i class="bi bi-arrow-up-circle"></i> Manual BUY
+                                    </button>
+                                    <button id="manualSell" class="btn btn-outline-danger">
+                                        <i class="bi bi-arrow-down-circle"></i> Manual SELL
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-footer text-center">
+                        <small class="text-muted">
+                            <i class="bi bi-lightning-charge"></i> System Status: 
+                            <span id="systemStatus" class="badge bg-success">Active</span>
+                        </small>
                     </div>
                 </div>
             </div>
@@ -306,10 +426,10 @@
                 <div class="text-center text-muted">
                     <small>
                         <i class="bi bi-c-circle"></i> 2024 EUR/USD 2-Minute Auto-Learning Trading System • 
-                        <span id="systemStatus" class="badge bg-success">System Active</span> • 
-                        Auto-refresh: <span id="autoRefreshStatus" class="badge bg-info">Enabled</span> • 
-                        Cycle: <span class="badge bg-primary">120s</span> • 
-                        Version 2.0
+                        <span class="badge bg-info">data.txt ML Training</span> • 
+                        <span class="badge bg-warning">30s Cache</span> • 
+                        <span class="badge bg-primary">120s Cycles</span> • 
+                        Version 2.0-data.txt
                     </small>
                 </div>
             </div>
@@ -325,10 +445,15 @@
     <script>
         // Initialize when page loads
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('EUR/USD 2-Minute Trading System initialized');
+            console.log('EUR/USD 2-Minute Trading System initialized with data.txt ML');
             
             // Set up auto-refresh
             startAutoRefresh();
+            
+            // Initialize chart system
+            if (typeof initializeChartSystem === 'function') {
+                initializeChartSystem();
+            }
             
             // Set up button events
             setupEventListeners();
@@ -336,7 +461,121 @@
             // Initial data fetch
             fetchTradingState();
             fetchTradeHistory();
+            fetchMLStatus();
+            fetchCacheStatus();
         });
+
+        // Global utility functions
+        function showMessage(message, type = 'info') {
+            const messageDiv = document.getElementById('systemMessage');
+            const messageText = document.getElementById('messageText');
+            
+            if (messageDiv && messageText) {
+                messageText.textContent = message;
+                messageDiv.className = `alert alert-${type} d-flex align-items-center justify-content-between`;
+                messageDiv.style.display = 'flex';
+            }
+        }
+
+        function hideMessage() {
+            const messageDiv = document.getElementById('systemMessage');
+            if (messageDiv) {
+                messageDiv.style.display = 'none';
+            }
+        }
+
+        function showMLDataMessage(message, type = 'info') {
+            const mlDataMessage = document.getElementById('mlDataMessage');
+            if (mlDataMessage) {
+                mlDataMessage.textContent = message;
+                mlDataMessage.className = `alert alert-${type} alert-sm mb-2 py-1 text-center`;
+                mlDataMessage.style.display = 'block';
+                
+                // Auto-hide success messages after 5 seconds
+                if (type === 'success') {
+                    setTimeout(() => {
+                        mlDataMessage.style.display = 'none';
+                    }, 5000);
+                }
+            }
+        }
+
+        function showMLTrainingMessage(message, type = 'info') {
+            const mlTrainingMessage = document.getElementById('mlTrainingMessage');
+            if (mlTrainingMessage) {
+                mlTrainingMessage.textContent = message;
+                mlTrainingMessage.className = `alert alert-${type} alert-sm mb-2 py-1 text-center`;
+                mlTrainingMessage.style.display = 'block';
+                
+                // Auto-hide success messages after 5 seconds
+                if (type === 'success') {
+                    setTimeout(() => {
+                        mlTrainingMessage.style.display = 'none';
+                    }, 5000);
+                }
+            }
+        }
+
+        function showMLCorrectionsMessage(message, type = 'info') {
+            const mlCorrectionsMessage = document.getElementById('mlCorrectionsMessage');
+            if (mlCorrectionsMessage) {
+                mlCorrectionsMessage.textContent = message;
+                mlCorrectionsMessage.className = `alert alert-${type} alert-sm mb-2 py-1 text-center`;
+                mlCorrectionsMessage.style.display = 'block';
+                
+                // Auto-hide success messages after 5 seconds
+                if (type === 'success') {
+                    setTimeout(() => {
+                        mlCorrectionsMessage.style.display = 'none';
+                    }, 5000);
+                }
+            }
+        }
+
+        // Auto-refresh functions
+        let refreshInterval = null;
+        
+        function startAutoRefresh() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+            refreshInterval = setInterval(() => {
+                fetchTradingState();
+                fetchTradeHistory();
+                fetchMLStatus();
+                fetchCacheStatus();
+            }, 2000);
+            console.log('Auto-refresh started (2s interval)');
+        }
+
+        function stopAutoRefresh() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+                refreshInterval = null;
+                console.log('Auto-refresh stopped');
+            }
+        }
+
+        // Basic setup functions (will be overridden by main.js)
+        function setupEventListeners() {
+            console.log('Setting up event listeners...');
+        }
+
+        function fetchTradingState() {
+            console.log('Fetching trading state...');
+        }
+
+        function fetchTradeHistory() {
+            console.log('Fetching trade history...');
+        }
+
+        function fetchMLStatus() {
+            console.log('Fetching ML status...');
+        }
+
+        function fetchCacheStatus() {
+            console.log('Fetching cache status...');
+        }
     </script>
 </body>
 </html>

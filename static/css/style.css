@@ -1,8 +1,9 @@
-/* Trading Dashboard Styles */
+/* Trading Dashboard Styles - data.txt ML Integration */
 body {
     background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
     color: white;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    min-height: 100vh;
 }
 
 .trading-card {
@@ -12,6 +13,12 @@ body {
     border-radius: 15px;
     padding: 20px;
     margin-bottom: 20px;
+    transition: all 0.3s ease;
+}
+
+.trading-card:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
 }
 
 .progress-bar {
@@ -26,6 +33,7 @@ body {
     transition: width 0.5s ease;
 }
 
+/* Signal Colors */
 .buy-signal {
     color: #00ff88;
     font-weight: bold;
@@ -39,4 +47,523 @@ body {
 .wait-signal {
     color: #ffaa00;
     font-weight: bold;
+}
+
+.neutral-signal {
+    color: #88aaff;
+    font-weight: bold;
+}
+
+/* ML System Styles */
+.ml-status-ready {
+    color: #00ff88;
+    background: rgba(0, 255, 136, 0.1);
+    border: 1px solid rgba(0, 255, 136, 0.3);
+    padding: 3px 8px;
+    border-radius: 4px;
+}
+
+.ml-status-warning {
+    color: #ffaa00;
+    background: rgba(255, 170, 0, 0.1);
+    border: 1px solid rgba(255, 170, 0, 0.3);
+    padding: 3px 8px;
+    border-radius: 4px;
+}
+
+.ml-status-not-ready {
+    color: #ff4444;
+    background: rgba(255, 68, 68, 0.1);
+    border: 1px solid rgba(255, 68, 68, 0.3);
+    padding: 3px 8px;
+    border-radius: 4px;
+}
+
+/* Message Styling */
+.system-message {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+    max-width: 400px;
+    padding: 15px;
+    border-radius: 10px;
+    backdrop-filter: blur(10px);
+    border: 1px solid;
+    animation: slideIn 0.3s ease;
+}
+
+.system-message-success {
+    background: rgba(0, 255, 136, 0.15);
+    border-color: rgba(0, 255, 136, 0.3);
+    color: #00ff88;
+}
+
+.system-message-error {
+    background: rgba(255, 68, 68, 0.15);
+    border-color: rgba(255, 68, 68, 0.3);
+    color: #ff4444;
+}
+
+.system-message-warning {
+    background: rgba(255, 170, 0, 0.15);
+    border-color: rgba(255, 170, 0, 0.3);
+    color: #ffaa00;
+}
+
+.system-message-info {
+    background: rgba(136, 170, 255, 0.15);
+    border-color: rgba(136, 170, 255, 0.3);
+    color: #88aaff;
+}
+
+.system-message-hidden {
+    display: none;
+}
+
+/* ML Message Cards */
+.ml-message-card {
+    border-left: 4px solid;
+    padding: 10px 15px;
+    margin: 5px 0;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.ml-message-success {
+    border-left-color: #00ff88;
+}
+
+.ml-message-error {
+    border-left-color: #ff4444;
+}
+
+.ml-message-warning {
+    border-left-color: #ffaa00;
+}
+
+.ml-message-info {
+    border-left-color: #88aaff;
+}
+
+/* Chart Status Indicators */
+.chart-status-indicator {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    font-size: 12px;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(5px);
+    z-index: 100;
+}
+
+.status-success {
+    color: #00ff88;
+    border: 1px solid rgba(0, 255, 136, 0.3);
+}
+
+.status-error {
+    color: #ff4444;
+    border: 1px solid rgba(255, 68, 68, 0.3);
+}
+
+.status-warning {
+    color: #ffaa00;
+    border: 1px solid rgba(255, 170, 0, 0.3);
+}
+
+.status-info {
+    color: #88aaff;
+    border: 1px solid rgba(136, 170, 255, 0.3);
+}
+
+/* Chart ML Message */
+.chart-ml-message {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 10px 15px;
+    border-radius: 8px;
+    border: 1px solid rgba(0, 255, 136, 0.3);
+    z-index: 50;
+    backdrop-filter: blur(5px);
+    animation: fadeIn 0.3s ease;
+}
+
+.ml-message-content {
+    font-size: 14px;
+}
+
+.ml-message-content small {
+    display: block;
+    color: #88aaff;
+    font-size: 12px;
+}
+
+/* Trade Result Colors */
+.trade-success {
+    background: rgba(0, 255, 136, 0.05);
+}
+
+.trade-failed {
+    background: rgba(255, 68, 68, 0.05);
+}
+
+.trade-partial-success {
+    background: rgba(255, 170, 0, 0.05);
+}
+
+.trade-partial-fail {
+    background: rgba(255, 100, 0, 0.05);
+}
+
+.trade-brekaven {
+    background: rgba(136, 170, 255, 0.05);
+}
+
+/* Badge Colors for Actions */
+.action-buy {
+    color: #00ff88;
+    background: rgba(0, 255, 136, 0.1);
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(0, 255, 136, 0.3);
+}
+
+.action-sell {
+    color: #ff4444;
+    background: rgba(255, 68, 68, 0.1);
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 68, 68, 0.3);
+}
+
+.action-none {
+    color: #88aaff;
+    background: rgba(136, 170, 255, 0.1);
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(136, 170, 255, 0.3);
+}
+
+/* Result Badges */
+.result-success {
+    color: #00ff88;
+    background: rgba(0, 255, 136, 0.1);
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.result-failed {
+    color: #ff4444;
+    background: rgba(255, 68, 68, 0.1);
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.result-partial-success {
+    color: #ffaa00;
+    background: rgba(255, 170, 0, 0.1);
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.result-partial-fail {
+    color: #ff8800;
+    background: rgba(255, 136, 0, 0.1);
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.result-breakeven {
+    color: #88aaff;
+    background: rgba(136, 170, 255, 0.1);
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.result-pending {
+    color: #aaaaaa;
+    background: rgba(170, 170, 170, 0.1);
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+/* ML Data Summary */
+.ml-data-summary {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.ml-data-summary p {
+    margin-bottom: 8px;
+}
+
+.ml-data-summary code {
+    background: rgba(0, 0, 0, 0.5);
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: #ffaa00;
+}
+
+.ml-stats {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.ml-stats p {
+    margin-bottom: 5px;
+    font-size: 14px;
+}
+
+/* Chart Popup */
+.chart-popup {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    animation: fadeIn 0.3s ease;
+}
+
+.chart-popup-content {
+    background: linear-gradient(135deg, #0f2027, #203a43);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 15px;
+    width: 90%;
+    max-width: 500px;
+    backdrop-filter: blur(10px);
+}
+
+.chart-popup-header {
+    padding: 15px 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.chart-popup-header h4 {
+    margin: 0;
+    color: #00ff88;
+}
+
+.close-popup {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: background 0.3s ease;
+}
+
+.close-popup:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.chart-popup-body {
+    padding: 20px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.chart-popup-footer {
+    padding: 15px 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    text-align: right;
+}
+
+/* Progress Bar Colors */
+.progress-bar-buy {
+    background: linear-gradient(90deg, #00ff88, #00cc6a);
+}
+
+.progress-bar-sell {
+    background: linear-gradient(90deg, #ff4444, #cc3636);
+}
+
+.progress-bar-wait {
+    background: linear-gradient(90deg, #ffaa00, #cc8800);
+}
+
+.progress-bar-ml {
+    background: linear-gradient(90deg, #88aaff, #6688cc);
+}
+
+/* Alert Variations */
+.alert-sm {
+    padding: 6px 12px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    border-radius: 6px;
+}
+
+.alert-ml-success {
+    background: rgba(0, 255, 136, 0.1);
+    border: 1px solid rgba(0, 255, 136, 0.3);
+    color: #00ff88;
+}
+
+.alert-ml-error {
+    background: rgba(255, 68, 68, 0.1);
+    border: 1px solid rgba(255, 68, 68, 0.3);
+    color: #ff4444;
+}
+
+.alert-ml-warning {
+    background: rgba(255, 170, 0, 0.1);
+    border: 1px solid rgba(255, 170, 0, 0.3);
+    color: #ffaa00;
+}
+
+.alert-ml-info {
+    background: rgba(136, 170, 255, 0.1);
+    border: 1px solid rgba(136, 170, 255, 0.3);
+    color: #88aaff;
+}
+
+/* Profit/Loss Colors */
+.profit-positive {
+    color: #00ff88;
+    font-weight: bold;
+}
+
+.profit-negative {
+    color: #ff4444;
+    font-weight: bold;
+}
+
+.profit-neutral {
+    color: #88aaff;
+}
+
+/* Data.txt File Indicator */
+.data-file-indicator {
+    display: inline-flex;
+    align-items: center;
+    background: rgba(255, 170, 0, 0.1);
+    border: 1px solid rgba(255, 170, 0, 0.3);
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #ffaa00;
+}
+
+.data-file-indicator::before {
+    content: "📝";
+    margin-right: 5px;
+}
+
+/* ML Ready Pulse Animation */
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.7; }
+    100% { opacity: 1; }
+}
+
+.ml-ready-pulse {
+    animation: pulse 2s infinite;
+    position: relative;
+}
+
+.ml-ready-pulse::after {
+    content: "";
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    border-radius: 50%;
+    border: 2px solid #00ff88;
+    animation: pulse 2s infinite;
+}
+
+/* Animations */
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeOut {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    .system-message {
+        left: 10px;
+        right: 10px;
+        max-width: none;
+    }
+    
+    .chart-ml-message {
+        left: 10px;
+        right: 10px;
+        bottom: 10px;
+    }
+    
+    .trading-card {
+        padding: 15px;
+    }
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(0, 255, 136, 0.3);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 255, 136, 0.5);
 }
