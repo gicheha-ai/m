@@ -3,102 +3,291 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EUR/USD 2-Minute Auto-Learning Trader</title>
+    <title>EUR/USD Advanced Auto-Learning Trading System</title>
+    
+    <!-- Bootstrap 5 -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Bootstrap Icons -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    
+    <!-- Plotly Charts -->
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    
+    <style>
+        :root {
+            --primary-color: #00ff88;
+            --success-color: #00ff88;
+            --danger-color: #ff4444;
+            --warning-color: #ffaa00;
+            --info-color: #88aaff;
+            --dark-bg: #0f2027;
+            --card-bg: rgba(255, 255, 255, 0.05);
+        }
+        
+        body {
+            background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+        }
+        
+        .trading-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            transition: all 0.3s ease;
+        }
+        
+        .trading-card:hover {
+            border-color: rgba(255, 255, 255, 0.2);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+        
+        .prediction-bullish {
+            color: var(--success-color) !important;
+            text-shadow: 0 0 10px rgba(0, 255, 136, 0.3);
+        }
+        
+        .prediction-bearish {
+            color: var(--danger-color) !important;
+            text-shadow: 0 0 10px rgba(255, 68, 68, 0.3);
+        }
+        
+        .prediction-neutral {
+            color: var(--warning-color) !important;
+        }
+        
+        .action-buy {
+            background: rgba(0, 255, 136, 0.2) !important;
+            border: 1px solid var(--success-color) !important;
+            color: var(--success-color) !important;
+        }
+        
+        .action-sell {
+            background: rgba(255, 68, 68, 0.2) !important;
+            border: 1px solid var(--danger-color) !important;
+            color: var(--danger-color) !important;
+        }
+        
+        .action-wait {
+            background: rgba(255, 170, 0, 0.2) !important;
+            border: 1px solid var(--warning-color) !important;
+            color: var(--warning-color) !important;
+        }
+        
+        .trade-row-success {
+            background: rgba(0, 255, 136, 0.05);
+        }
+        
+        .trade-row-failed {
+            background: rgba(255, 68, 68, 0.05);
+        }
+        
+        .trade-row-partial-success {
+            background: rgba(255, 170, 0, 0.05);
+        }
+        
+        .trade-row-partial-fail {
+            background: rgba(255, 100, 0, 0.05);
+        }
+        
+        .profit-positive {
+            color: var(--success-color);
+            font-weight: bold;
+        }
+        
+        .profit-negative {
+            color: var(--danger-color);
+            font-weight: bold;
+        }
+        
+        .trade-result-success {
+            color: var(--success-color);
+            background: rgba(0, 255, 136, 0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        
+        .trade-result-failed {
+            color: var(--danger-color);
+            background: rgba(255, 68, 68, 0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        
+        .trade-result-partial-success {
+            color: var(--warning-color);
+            background: rgba(255, 170, 0, 0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        
+        .trade-result-partial-fail {
+            color: #ff8800;
+            background: rgba(255, 136, 0, 0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        
+        .trade-action-buy {
+            color: var(--success-color);
+            background: rgba(0, 255, 136, 0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        
+        .trade-action-sell {
+            color: var(--danger-color);
+            background: rgba(255, 68, 68, 0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        
+        .progress-bar-warning {
+            background: linear-gradient(90deg, var(--warning-color), #cc8800) !important;
+        }
+        
+        .signal-stars {
+            color: var(--warning-color);
+            font-size: 1.2em;
+        }
+        
+        .trade-active-card {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .stat-card {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 10px;
+        }
+        
+        .stat-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: var(--primary-color);
+        }
+        
+        .stat-label {
+            font-size: 0.9em;
+            color: rgba(255, 255, 255, 0.7);
+        }
+        
+        .ml-status-ready {
+            color: var(--success-color);
+            background: rgba(0, 255, 136, 0.1);
+            padding: 3px 8px;
+            border-radius: 4px;
+        }
+        
+        .ml-status-not-ready {
+            color: var(--danger-color);
+            background: rgba(255, 68, 68, 0.1);
+            padding: 3px 8px;
+            border-radius: 4px;
+        }
+        
+        .cache-efficient {
+            color: var(--success-color);
+        }
+        
+        .cache-inefficient {
+            color: var(--warning-color);
+        }
+        
+        .chart-container {
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .alert-sm {
+            padding: 6px 12px;
+            margin-bottom: 8px;
+            font-size: 0.85em;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+        
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+    </style>
 </head>
 <body>
-    <div class="container-fluid py-4">
+    <!-- Toast Container for Notifications -->
+    <div id="toastContainer"></div>
+
+    <div class="container-fluid py-3">
         <!-- Header -->
         <div class="row mb-4">
             <div class="col-12">
-                <div class="card trading-card">
+                <div class="trading-card">
                     <div class="card-body text-center">
-                        <h1 class="text-warning mb-2"><i class="bi bi-graph-up-arrow"></i> EUR/USD 2-Minute Auto-Learning Trading System</h1>
+                        <h1 class="text-warning mb-2">
+                            <i class="bi bi-graph-up-arrow"></i> 
+                            EUR/USD Advanced Auto-Learning Trading System
+                        </h1>
                         <p class="text-light mb-0">
-                            <i class="bi bi-clock"></i> Predictions every 120 seconds • 
-                            <i class="bi bi-cpu"></i> ML-Optimized TP/SL • 
+                            <i class="bi bi-lightning-charge"></i> 2-Minute Cycles • 
+                            <i class="bi bi-cpu"></i> Machine Learning • 
                             <i class="bi bi-file-earmark-text"></i> data.txt Training • 
-                            <i class="bi bi-cash-coin"></i> Real-time Virtual Trading
+                            <i class="bi bi-arrow-repeat"></i> Real-time Updates
                         </p>
+                        <div class="mt-2">
+                            <span class="badge bg-success me-2" id="systemStatus">SYSTEM ACTIVE</span>
+                            <span class="badge bg-info me-2">Version 3.0</span>
+                            <span class="badge bg-warning">Render Optimized</span>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- System Message Banner -->
+        <!-- System Message -->
         <div class="row mb-3">
             <div class="col-12">
-                <div id="systemMessage" class="alert alert-info d-flex align-items-center justify-content-between" role="alert">
-                    <div>
-                        <i class="bi bi-info-circle me-2"></i>
-                        <span id="messageText">System initialized. Loading trading data...</span>
-                    </div>
-                    <button type="button" class="btn-close" onclick="hideMessage()"></button>
+                <div id="systemMessage" class="alert alert-info alert-dismissible fade show" style="display: none;" role="alert">
+                    <span id="messageText">System initializing...</span>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                 </div>
             </div>
         </div>
 
-        <!-- Top Row: System Status -->
+        <!-- Top Row: Market Data & Prediction -->
         <div class="row mb-4">
-            <!-- Cycle Status -->
+            <!-- Current Price & Market Data -->
             <div class="col-md-3">
-                <div class="card trading-card h-100">
-                    <div class="card-header bg-primary">
-                        <h5 class="mb-0"><i class="bi bi-arrow-repeat"></i> Trading Cycle</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="d-flex justify-content-between mb-3">
-                            <span>Cycle Count:</span>
-                            <span class="fs-5 fw-bold text-info" id="cycleCount">0</span>
-                        </div>
-                        <div class="d-flex justify-content-between mb-3">
-                            <span>Next Cycle In:</span>
-                            <span class="fs-5 fw-bold" id="nextCycle">120s</span>
-                        </div>
-                        <div class="mb-3">
-                            <div class="progress" style="height: 15px;">
-                                <div id="cycleProgress" class="progress-bar progress-bar-striped progress-bar-animated bg-info" 
-                                     role="progressbar" style="width: 0%">0%</div>
-                            </div>
-                            <small class="text-muted mt-1 d-block text-center">Cycle Progress (120 seconds)</small>
-                        </div>
-                        <div class="d-flex justify-content-between">
-                            <span>Last Update:</span>
-                            <span id="lastUpdate">-</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Market Price -->
-            <div class="col-md-3">
-                <div class="card trading-card h-100">
-                    <div class="card-header bg-success">
+                <div class="trading-card h-100">
+                    <div class="card-header bg-primary d-flex justify-content-between align-items-center">
                         <h5 class="mb-0"><i class="bi bi-currency-exchange"></i> Market Data</h5>
+                        <span class="badge bg-dark" id="apiStatus">CONNECTING</span>
                     </div>
                     <div class="card-body text-center">
-                        <div class="mb-3">
-                            <span class="text-muted d-block mb-1">EUR/USD Price</span>
-                            <span class="display-6 fw-bold" id="currentPrice">1.08500</span>
+                        <div class="mb-4">
+                            <span class="text-muted d-block mb-1">EUR/USD Current Price</span>
+                            <span id="currentPrice" class="display-5 fw-bold">1.08500</span>
                         </div>
                         <div class="row text-start">
                             <div class="col-6">Data Source:</div>
                             <div class="col-6 text-end" id="dataSource">-</div>
                         </div>
                         <div class="row text-start mt-2">
-                            <div class="col-6">API Status:</div>
-                            <div class="col-6 text-end">
-                                <span id="apiStatus" class="badge bg-success">CONNECTED</span>
-                            </div>
-                        </div>
-                        <div class="row text-start mt-2">
-                            <div class="col-6">Signal Strength:</div>
-                            <div class="col-6 text-end">
-                                <span id="signalStrength" class="badge bg-warning">0/3</span>
-                            </div>
+                            <div class="col-6">Volatility:</div>
+                            <div class="col-6 text-end" id="volatility">MEDIUM</div>
                         </div>
                         <div class="row text-start mt-2">
                             <div class="col-6">Server Time:</div>
@@ -108,237 +297,200 @@
                 </div>
             </div>
 
-            <!-- Prediction -->
+            <!-- 2-Minute Prediction -->
             <div class="col-md-3">
-                <div class="card trading-card h-100">
+                <div class="trading-card h-100">
                     <div class="card-header bg-warning">
                         <h5 class="mb-0"><i class="bi bi-lightbulb"></i> 2-Minute Prediction</h5>
                     </div>
                     <div class="card-body text-center">
                         <div class="mb-4">
                             <span class="text-muted d-block mb-1">Direction</span>
-                            <span id="prediction" class="display-6 fw-bold">ANALYZING</span>
+                            <span id="minutePrediction" class="display-5 fw-bold prediction-display">ANALYZING</span>
                         </div>
                         <div class="mb-4">
                             <span class="text-muted d-block mb-1">Confidence</span>
                             <div class="progress" style="height: 20px;">
-                                <div id="confidenceBar" class="progress-bar" role="progressbar" style="width: 0%">0%</div>
+                                <div id="confidenceBar" class="progress-bar" role="progressbar" style="width: 0%"></div>
                             </div>
-                            <span id="confidenceText" class="mt-1 d-block">0%</span>
+                            <span id="confidence" class="mt-1 d-block fw-bold">0%</span>
                         </div>
                         <div>
-                            <span class="text-muted d-block mb-1">Action</span>
-                            <span id="action" class="badge bg-secondary fs-5 p-2">WAIT</span>
+                            <span class="text-muted d-block mb-1">Signal Strength</span>
+                            <span id="signalStrength" class="signal-stars">☆☆☆</span>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Statistics -->
+            <!-- Trading Action -->
             <div class="col-md-3">
-                <div class="card trading-card h-100">
+                <div class="trading-card h-100">
+                    <div class="card-header bg-success">
+                        <h5 class="mb-0"><i class="bi bi-activity"></i> Trading Action</h5>
+                    </div>
+                    <div class="card-body text-center">
+                        <div class="mb-4">
+                            <span class="text-muted d-block mb-1">Current Action</span>
+                            <span id="action" class="action-badge display-5 fw-bold p-3 rounded">WAIT</span>
+                        </div>
+                        <div class="mb-4">
+                            <span class="text-muted d-block mb-1">Risk/Reward</span>
+                            <span id="riskRewardRatio" class="fs-4 fw-bold">1:2</span>
+                        </div>
+                        <div>
+                            <span class="text-muted d-block mb-1">Last Update</span>
+                            <span id="lastUpdate" class="fw-bold">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trading Cycle -->
+            <div class="col-md-3">
+                <div class="trading-card h-100">
                     <div class="card-header bg-info">
-                        <h5 class="mb-0"><i class="bi bi-bar-chart"></i> Trading Statistics</h5>
+                        <h5 class="mb-0"><i class="bi bi-arrow-repeat"></i> Trading Cycle</h5>
                     </div>
                     <div class="card-body">
-                        <div class="row mb-2">
-                            <div class="col-6">Balance:</div>
-                            <div class="col-6 text-end fw-bold" id="balance">$10,000.00</div>
+                        <div class="d-flex justify-content-between mb-3">
+                            <span>Cycle Count:</span>
+                            <span id="cycleCount" class="fs-5 fw-bold text-info">0</span>
                         </div>
-                        <div class="row mb-2">
-                            <div class="col-6">Total Trades:</div>
-                            <div class="col-6 text-end" id="totalTrades">0</div>
+                        <div class="d-flex justify-content-between mb-3">
+                            <span>Next Cycle In:</span>
+                            <span id="nextCycleIn" class="fs-5 fw-bold">120s</span>
                         </div>
-                        <div class="row mb-2">
-                            <div class="col-6">Win Rate:</div>
-                            <div class="col-6 text-end" id="winRate">0%</div>
-                        </div>
-                        <div class="row mb-2">
-                            <div class="col-6">ML Ready:</div>
-                            <div class="col-6 text-end">
-                                <span id="mlReady" class="badge bg-success">Yes</span>
+                        <div class="mb-3">
+                            <div class="progress" style="height: 12px;">
+                                <div id="cycleProgress" class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     role="progressbar" style="width: 0%"></div>
                             </div>
+                            <small class="text-muted d-block text-center mt-1">Cycle Progress</small>
                         </div>
-                        <div class="row mb-2">
-                            <div class="col-6">Cycle Duration:</div>
-                            <div class="col-6 text-end fw-bold">120s</div>
-                        </div>
-                        <div class="row mb-2">
-                            <div class="col-6">Remaining Time:</div>
-                            <div class="col-6 text-end" id="remainingTime">120s</div>
+                        <div class="d-flex justify-content-between">
+                            <span>Remaining Time:</span>
+                            <span id="remainingTime" class="fw-bold">120s</span>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Middle Row: Chart and Trade Info -->
+        <!-- Middle Row: Chart & Active Trade -->
         <div class="row mb-4">
             <!-- Main Chart -->
             <div class="col-md-8">
-                <div class="card trading-card h-100">
-                    <div class="card-header bg-dark">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="bi bi-graph-up"></i> Live Trading Chart (2-Minute View)</h5>
-                            <div>
-                                <span class="badge bg-warning me-2" id="chartStatus">Loading...</span>
-                                <button id="toggleChart" class="btn btn-sm btn-outline-light" title="Toggle Fullscreen">
-                                    <i class="bi bi-arrows-angle-expand"></i>
-                                </button>
-                                <button id="exportChart" class="btn btn-sm btn-outline-light ms-2" title="Export Chart Data">
-                                    <i class="bi bi-download"></i>
-                                </button>
-                            </div>
+                <div class="trading-card h-100">
+                    <div class="card-header bg-dark d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="bi bi-graph-up"></i> Live Trading Chart</h5>
+                        <div>
+                            <span class="badge bg-warning me-2" id="chartStatus">Loading...</span>
+                            <button id="toggleChartBtn" class="btn btn-sm btn-outline-light me-2" title="Fullscreen">
+                                <i class="bi bi-arrows-angle-expand"></i>
+                            </button>
+                            <button id="exportChartBtn" class="btn btn-sm btn-outline-light" title="Export">
+                                <i class="bi bi-download"></i>
+                            </button>
                         </div>
                     </div>
-                    <div class="card-body p-0 position-relative">
+                    <div class="card-body p-0 chart-container">
                         <div id="chart" style="height: 450px; width: 100%;"></div>
-                        <div id="chartStatusIndicator" class="chart-status-indicator"></div>
                     </div>
                 </div>
             </div>
 
-            <!-- Active Trade & Controls -->
+            <!-- Active Trade & Statistics -->
             <div class="col-md-4">
-                <!-- Active Trade -->
-                <div class="card trading-card mb-3">
+                <!-- Active Trade Card -->
+                <div class="trading-card mb-3">
                     <div class="card-header bg-danger">
-                        <h5 class="mb-0"><i class="bi bi-activity"></i> Active Trade</h5>
+                        <h5 class="mb-0"><i class="bi bi-lightning-charge"></i> Active Trade</h5>
                     </div>
                     <div class="card-body" id="activeTrade">
                         <div class="text-center text-muted py-4">
                             <i class="bi bi-hourglass-split display-4 d-block mb-3"></i>
                             <span class="fs-5">No active trade</span>
-                            <p class="small mt-2">Waiting for next trading signal...</p>
+                            <p class="small mt-2">Waiting for trading signal...</p>
                         </div>
                     </div>
                 </div>
 
-                <!-- TP/SL Levels -->
-                <div class="card trading-card mb-3">
+                <!-- Quick Stats -->
+                <div class="trading-card">
                     <div class="card-header bg-secondary">
-                        <h5 class="mb-0"><i class="bi bi-bullseye"></i> TP/SL Levels</h5>
+                        <h5 class="mb-0"><i class="bi bi-speedometer2"></i> Quick Stats</h5>
                     </div>
                     <div class="card-body">
-                        <div class="row mb-3">
-                            <div class="col-12 text-center mb-3">
-                                <div class="d-inline-block p-3 rounded bg-dark">
-                                    <small class="text-muted d-block">Trade Progress</small>
-                                    <span id="tradeProgress" class="fs-4 fw-bold">0%</span>
-                                </div>
-                                <div class="d-inline-block p-3 rounded bg-dark ms-2">
-                                    <small class="text-muted d-block">Risk/Reward</small>
-                                    <span id="riskReward" class="fs-4 fw-bold">1:2</span>
-                                </div>
+                        <div class="row">
+                            <div class="col-6 stat-card">
+                                <div class="stat-label">Balance</div>
+                                <div id="balance" class="stat-value">$10,000.00</div>
                             </div>
-                        </div>
-                        <div class="row mb-2">
-                            <div class="col-6">Take Profit:</div>
-                            <div class="col-6 text-end fw-bold" id="optimalTp">-</div>
-                        </div>
-                        <div class="row mb-2">
-                            <div class="col-6">Stop Loss:</div>
-                            <div class="col-6 text-end fw-bold" id="optimalSl">-</div>
-                        </div>
-                        <div class="row mb-2">
-                            <div class="col-6">TP Distance:</div>
-                            <div class="col-6 text-end" id="tpPips">
-                                <span class="badge bg-success">0 pips</span>
+                            <div class="col-6 stat-card">
+                                <div class="stat-label">Win Rate</div>
+                                <div id="winRate" class="stat-value">0%</div>
                             </div>
                         </div>
                         <div class="row">
-                            <div class="col-6">SL Distance:</div>
-                            <div class="col-6 text-end" id="slPips">
-                                <span class="badge bg-danger">0 pips</span>
+                            <div class="col-6 stat-card">
+                                <div class="stat-label">Total Trades</div>
+                                <div id="totalTrades" class="stat-value">0</div>
+                            </div>
+                            <div class="col-6 stat-card">
+                                <div class="stat-label">Profitable</div>
+                                <div id="profitableTrades" class="stat-value">0</div>
                             </div>
                         </div>
-                    </div>
-                </div>
-
-                <!-- ML System Control Panel -->
-                <div class="card trading-card">
-                    <div class="card-header bg-info">
-                        <h5 class="mb-0"><i class="bi bi-cpu"></i> ML System Control</h5>
-                    </div>
-                    <div class="card-body">
-                        <!-- ML Status Messages -->
-                        <div id="mlDataMessage" class="alert alert-sm mb-2 py-1 text-center" style="display: none;"></div>
-                        <div id="mlTrainingMessage" class="alert alert-sm mb-2 py-1 text-center" style="display: none;"></div>
-                        <div id="mlCorrectionsMessage" class="alert alert-sm mb-3 py-1 text-center" style="display: none;"></div>
-
-                        <!-- ML Status Info -->
-                        <div class="row mb-2">
-                            <div class="col-6">Training File:</div>
-                            <div class="col-6 text-end">
-                                <code>data.txt</code>
+                        <div class="row">
+                            <div class="col-6 stat-card">
+                                <div class="stat-label">Total Pips</div>
+                                <div id="totalPips" class="stat-value">0.0</div>
                             </div>
-                        </div>
-                        <div class="row mb-2">
-                            <div class="col-6">Data Samples:</div>
-                            <div class="col-6 text-end fw-bold" id="trainingSamples">0</div>
-                        </div>
-                        <div class="row mb-2">
-                            <div class="col-6">Corrections:</div>
-                            <div class="col-6 text-end fw-bold" id="mlCorrectionsApplied">0</div>
-                        </div>
-                        <div class="row mb-3">
-                            <div class="col-12">
-                                <small class="text-muted" id="mlTrainingStatus">Waiting for data...</small>
+                            <div class="col-6 stat-card">
+                                <div class="stat-label">Daily P/L</div>
+                                <div id="dailyProfit" class="stat-value">$0.00</div>
                             </div>
-                        </div>
-
-                        <!-- Control Buttons -->
-                        <div class="d-grid gap-2">
-                            <button id="viewMLData" class="btn btn-outline-info">
-                                <i class="bi bi-file-earmark-text"></i> View ML Data
-                            </button>
-                            <button id="forceMLTraining" class="btn btn-outline-warning">
-                                <i class="bi bi-gear"></i> Force ML Training
-                            </button>
-                            <button id="resetTrading" class="btn btn-outline-danger">
-                                <i class="bi bi-arrow-clockwise"></i> Reset Trading
-                            </button>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Bottom Row: Trade History and Cache Status -->
+        <!-- Bottom Row: Trade History & System Controls -->
         <div class="row">
             <!-- Trade History -->
             <div class="col-md-8">
-                <div class="card trading-card h-100">
-                    <div class="card-header">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="bi bi-clock-history"></i> Trade History</h5>
-                            <div>
-                                <span class="badge bg-dark me-2">Total: <span id="totalHistoryTrades">0</span></span>
-                                <span class="badge bg-success">Wins: <span id="totalWins">0</span></span>
-                            </div>
+                <div class="trading-card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="bi bi-clock-history"></i> Trade History</h5>
+                        <div>
+                            <span class="badge bg-dark me-2">Total: <span id="totalHistoryTrades">0</span></span>
+                            <span class="badge bg-success">Wins: <span id="totalWins">0</span></span>
                         </div>
                     </div>
                     <div class="card-body p-0">
-                        <div class="table-responsive">
+                        <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
                             <table class="table table-dark table-hover mb-0">
-                                <thead>
+                                <thead style="position: sticky; top: 0; background: #212529;">
                                     <tr>
                                         <th>ID</th>
                                         <th>Time</th>
                                         <th>Action</th>
                                         <th>Entry</th>
-                                        <th>TP/SL</th>
                                         <th>Exit</th>
                                         <th>Pips</th>
+                                        <th>Amount</th>
                                         <th>Duration</th>
                                         <th>Result</th>
                                         <th>Confidence</th>
+                                        <th>TP/SL</th>
                                     </tr>
                                 </thead>
-                                <tbody id="tradeHistory">
+                                <tbody id="tradeHistoryBody">
                                     <tr>
-                                        <td colspan="10" class="text-center py-4">
-                                            <i class="bi bi-inbox display-6 d-block text-muted mb-2"></i>
+                                        <td colspan="11" class="text-center py-5">
+                                            <i class="bi bi-inbox display-6 d-block text-muted mb-3"></i>
                                             <span class="text-muted">No trades yet</span>
                                         </td>
                                     </tr>
@@ -346,19 +498,62 @@
                             </table>
                         </div>
                     </div>
-                    <div class="card-footer text-muted text-center">
-                        <small>Showing last 10 trades • Complete history saved to data.txt • 120-second cycles</small>
-                    </div>
                 </div>
             </div>
 
-            <!-- Cache and API Status -->
+            <!-- System Controls & Status -->
             <div class="col-md-4">
-                <div class="card trading-card h-100">
-                    <div class="card-header bg-dark">
-                        <h5 class="mb-0"><i class="bi bi-speedometer2"></i> Performance & Cache</h5>
+                <!-- ML System Status -->
+                <div class="trading-card mb-3">
+                    <div class="card-header bg-info">
+                        <h5 class="mb-0"><i class="bi bi-cpu"></i> Machine Learning System</h5>
                     </div>
                     <div class="card-body">
+                        <!-- ML Messages -->
+                        <div id="mlDataMessage" class="alert alert-sm mb-2 py-1 text-center" style="display: none;"></div>
+                        <div id="mlTrainingMessage" class="alert alert-sm mb-2 py-1 text-center" style="display: none;"></div>
+                        <div id="mlCorrectionsMessage" class="alert alert-sm mb-3 py-1 text-center" style="display: none;"></div>
+
+                        <!-- ML Status -->
+                        <div class="row mb-2">
+                            <div class="col-6">ML Ready:</div>
+                            <div class="col-6 text-end">
+                                <span id="mlReady" class="badge bg-danger">NO</span>
+                            </div>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-6">Training Samples:</div>
+                            <div class="col-6 text-end fw-bold" id="trainingSamples">0</div>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-6">Corrections Applied:</div>
+                            <div class="col-6 text-end fw-bold" id="mlCorrectionsApplied">0</div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-12">
+                                <small class="text-muted" id="mlTrainingStatus">Collecting data...</small>
+                            </div>
+                        </div>
+
+                        <!-- ML Controls -->
+                        <div class="d-grid gap-2">
+                            <button id="viewMLDataBtn" class="btn btn-outline-info">
+                                <i class="bi bi-file-earmark-text"></i> View ML Data
+                            </button>
+                            <button id="forceMLTrainingBtn" class="btn btn-outline-warning">
+                                <i class="bi bi-gear"></i> Force ML Training
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- System Controls & Cache -->
+                <div class="trading-card">
+                    <div class="card-header bg-dark">
+                        <h5 class="mb-0"><i class="bi bi-gear"></i> System Controls</h5>
+                    </div>
+                    <div class="card-body">
+                        <!-- Cache Status -->
                         <h6 class="text-warning mb-3"><i class="bi bi-database"></i> Cache Status</h6>
                         <div class="row mb-2">
                             <div class="col-6">Cache Hits:</div>
@@ -372,49 +567,118 @@
                             <div class="col-6">Efficiency:</div>
                             <div class="col-6 text-end fw-bold" id="cacheEfficiency">0%</div>
                         </div>
-
-                        <h6 class="text-warning mb-3"><i class="bi bi-shield-check"></i> API Protection</h6>
-                        <div class="row mb-2">
+                        <div class="row mb-3">
                             <div class="col-6">API Calls/Day:</div>
                             <div class="col-6 text-end">
-                                <span id="apiCallsToday" class="badge bg-success">~240 (SAFE)</span>
-                            </div>
-                        </div>
-                        <div class="row mb-2">
-                            <div class="col-6">Cache Duration:</div>
-                            <div class="col-6 text-end">30s</div>
-                        </div>
-                        <div class="row mb-3">
-                            <div class="col-6">Auto-refresh:</div>
-                            <div class="col-6 text-end">
-                                <div class="form-check form-switch d-inline-block">
-                                    <input class="form-check-input" type="checkbox" id="autoRefreshToggle" checked>
-                                </div>
+                                <span id="apiCallsToday" class="badge bg-success">~320</span>
                             </div>
                         </div>
 
-                        <!-- System Controls -->
-                        <div class="mt-4 pt-3 border-top">
-                            <div class="d-grid gap-2">
-                                <button id="refreshBtn" class="btn btn-outline-primary">
-                                    <i class="bi bi-arrow-repeat"></i> Refresh Dashboard
+                        <!-- Controls -->
+                        <div class="d-grid gap-2">
+                            <button id="refreshBtn" class="btn btn-outline-primary">
+                                <i class="bi bi-arrow-repeat"></i> Refresh Dashboard
+                            </button>
+                            <div class="btn-group">
+                                <button id="manualBuyBtn" class="btn btn-outline-success">
+                                    <i class="bi bi-arrow-up-circle"></i> Manual BUY
                                 </button>
-                                <div class="btn-group" role="group">
-                                    <button id="manualBuy" class="btn btn-outline-success">
-                                        <i class="bi bi-arrow-up-circle"></i> Manual BUY
-                                    </button>
-                                    <button id="manualSell" class="btn btn-outline-danger">
-                                        <i class="bi bi-arrow-down-circle"></i> Manual SELL
-                                    </button>
-                                </div>
+                                <button id="manualSellBtn" class="btn btn-outline-danger">
+                                    <i class="bi bi-arrow-down-circle"></i> Manual SELL
+                                </button>
+                            </div>
+                            <button id="resetTradingBtn" class="btn btn-outline-danger">
+                                <i class="bi bi-arrow-clockwise"></i> Reset Trading
+                            </button>
+                        </div>
+
+                        <!-- Auto-refresh Toggle -->
+                        <div class="mt-3 pt-3 border-top">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="autoRefreshToggle" checked>
+                                <label class="form-check-label" for="autoRefreshToggle">Auto-refresh (3s)</label>
                             </div>
                         </div>
                     </div>
-                    <div class="card-footer text-center">
-                        <small class="text-muted">
-                            <i class="bi bi-lightning-charge"></i> System Status: 
-                            <span id="systemStatus" class="badge bg-success">Active</span>
-                        </small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Advanced Metrics Row -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="trading-card">
+                    <div class="card-header bg-warning">
+                        <h5 class="mb-0"><i class="bi bi-bar-chart"></i> Advanced Trading Metrics</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-2 col-6 mb-3">
+                                <div class="text-center">
+                                    <div class="stat-label">Profit Factor</div>
+                                    <div id="profitFactor" class="stat-value">0.00</div>
+                                </div>
+                            </div>
+                            <div class="col-md-2 col-6 mb-3">
+                                <div class="text-center">
+                                    <div class="stat-label">Expectancy</div>
+                                    <div id="expectancy" class="stat-value">0.0</div>
+                                </div>
+                            </div>
+                            <div class="col-md-2 col-6 mb-3">
+                                <div class="text-center">
+                                    <div class="stat-label">Max Drawdown</div>
+                                    <div id="maxDrawdown" class="stat-value">0.0%</div>
+                                </div>
+                            </div>
+                            <div class="col-md-2 col-6 mb-3">
+                                <div class="text-center">
+                                    <div class="stat-label">Avg Win</div>
+                                    <div id="avgWinPips" class="stat-value">0.0</div>
+                                </div>
+                            </div>
+                            <div class="col-md-2 col-6 mb-3">
+                                <div class="text-center">
+                                    <div class="stat-label">Avg Loss</div>
+                                    <div id="avgLossPips" class="stat-value">0.0</div>
+                                </div>
+                            </div>
+                            <div class="col-md-2 col-6 mb-3">
+                                <div class="text-center">
+                                    <div class="stat-label">Best/Worst</div>
+                                    <div>
+                                        <span id="bestTrade" class="text-success">0.0</span> / 
+                                        <span id="worstTrade" class="text-danger">0.0</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row mt-2">
+                            <div class="col-md-3 col-6">
+                                <div class="text-center">
+                                    <div class="stat-label">Consecutive Wins</div>
+                                    <div id="consecutiveWins" class="stat-value">0</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3 col-6">
+                                <div class="text-center">
+                                    <div class="stat-label">Consecutive Losses</div>
+                                    <div id="consecutiveLosses" class="stat-value">0</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3 col-6">
+                                <div class="text-center">
+                                    <div class="stat-label">TP Distance</div>
+                                    <div id="tpDistancePips" class="stat-value">-</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3 col-6">
+                                <div class="text-center">
+                                    <div class="stat-label">SL Distance</div>
+                                    <div id="slDistancePips" class="stat-value">-</div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -425,12 +689,17 @@
             <div class="col-12">
                 <div class="text-center text-muted">
                     <small>
-                        <i class="bi bi-c-circle"></i> 2024 EUR/USD 2-Minute Auto-Learning Trading System • 
-                        <span class="badge bg-info">data.txt ML Training</span> • 
-                        <span class="badge bg-warning">30s Cache</span> • 
-                        <span class="badge bg-primary">120s Cycles</span> • 
-                        Version 2.0-data.txt
+                        <i class="bi bi-c-circle"></i> 2024 EUR/USD Advanced Auto-Learning Trading System • 
+                        <span class="badge bg-success pulse">REAL-TIME</span> • 
+                        <span class="badge bg-info">25+ INDICATORS</span> • 
+                        <span class="badge bg-warning">MACHINE LEARNING</span> • 
+                        <span class="badge bg-primary">RENDER DEPLOYED</span>
                     </small>
+                    <div class="mt-2">
+                        <button id="healthCheckBtn" class="btn btn-sm btn-outline-light">
+                            <i class="bi bi-heart-pulse"></i> System Health
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -438,144 +707,31 @@
 
     <!-- JavaScript Files -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
-    
+
     <script>
-        // Initialize when page loads
+        // Initialize tooltips
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('EUR/USD 2-Minute Trading System initialized with data.txt ML');
+            var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+                return new bootstrap.Tooltip(tooltipTriggerEl);
+            });
             
-            // Set up auto-refresh
-            startAutoRefresh();
+            // Fullscreen change handler
+            document.addEventListener('fullscreenchange', handleFullscreenChange);
+            document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
             
-            // Initialize chart system
-            if (typeof initializeChartSystem === 'function') {
-                initializeChartSystem();
+            function handleFullscreenChange() {
+                const btn = document.getElementById('toggleChartBtn');
+                if (document.fullscreenElement) {
+                    btn.innerHTML = '<i class="bi bi-fullscreen-exit"></i>';
+                    btn.title = 'Exit Fullscreen';
+                } else {
+                    btn.innerHTML = '<i class="bi bi-arrows-angle-expand"></i>';
+                    btn.title = 'Fullscreen';
+                }
             }
-            
-            // Set up button events
-            setupEventListeners();
-            
-            // Initial data fetch
-            fetchTradingState();
-            fetchTradeHistory();
-            fetchMLStatus();
-            fetchCacheStatus();
         });
-
-        // Global utility functions
-        function showMessage(message, type = 'info') {
-            const messageDiv = document.getElementById('systemMessage');
-            const messageText = document.getElementById('messageText');
-            
-            if (messageDiv && messageText) {
-                messageText.textContent = message;
-                messageDiv.className = `alert alert-${type} d-flex align-items-center justify-content-between`;
-                messageDiv.style.display = 'flex';
-            }
-        }
-
-        function hideMessage() {
-            const messageDiv = document.getElementById('systemMessage');
-            if (messageDiv) {
-                messageDiv.style.display = 'none';
-            }
-        }
-
-        function showMLDataMessage(message, type = 'info') {
-            const mlDataMessage = document.getElementById('mlDataMessage');
-            if (mlDataMessage) {
-                mlDataMessage.textContent = message;
-                mlDataMessage.className = `alert alert-${type} alert-sm mb-2 py-1 text-center`;
-                mlDataMessage.style.display = 'block';
-                
-                // Auto-hide success messages after 5 seconds
-                if (type === 'success') {
-                    setTimeout(() => {
-                        mlDataMessage.style.display = 'none';
-                    }, 5000);
-                }
-            }
-        }
-
-        function showMLTrainingMessage(message, type = 'info') {
-            const mlTrainingMessage = document.getElementById('mlTrainingMessage');
-            if (mlTrainingMessage) {
-                mlTrainingMessage.textContent = message;
-                mlTrainingMessage.className = `alert alert-${type} alert-sm mb-2 py-1 text-center`;
-                mlTrainingMessage.style.display = 'block';
-                
-                // Auto-hide success messages after 5 seconds
-                if (type === 'success') {
-                    setTimeout(() => {
-                        mlTrainingMessage.style.display = 'none';
-                    }, 5000);
-                }
-            }
-        }
-
-        function showMLCorrectionsMessage(message, type = 'info') {
-            const mlCorrectionsMessage = document.getElementById('mlCorrectionsMessage');
-            if (mlCorrectionsMessage) {
-                mlCorrectionsMessage.textContent = message;
-                mlCorrectionsMessage.className = `alert alert-${type} alert-sm mb-2 py-1 text-center`;
-                mlCorrectionsMessage.style.display = 'block';
-                
-                // Auto-hide success messages after 5 seconds
-                if (type === 'success') {
-                    setTimeout(() => {
-                        mlCorrectionsMessage.style.display = 'none';
-                    }, 5000);
-                }
-            }
-        }
-
-        // Auto-refresh functions
-        let refreshInterval = null;
-        
-        function startAutoRefresh() {
-            if (refreshInterval) {
-                clearInterval(refreshInterval);
-            }
-            refreshInterval = setInterval(() => {
-                fetchTradingState();
-                fetchTradeHistory();
-                fetchMLStatus();
-                fetchCacheStatus();
-            }, 2000);
-            console.log('Auto-refresh started (2s interval)');
-        }
-
-        function stopAutoRefresh() {
-            if (refreshInterval) {
-                clearInterval(refreshInterval);
-                refreshInterval = null;
-                console.log('Auto-refresh stopped');
-            }
-        }
-
-        // Basic setup functions (will be overridden by main.js)
-        function setupEventListeners() {
-            console.log('Setting up event listeners...');
-        }
-
-        function fetchTradingState() {
-            console.log('Fetching trading state...');
-        }
-
-        function fetchTradeHistory() {
-            console.log('Fetching trade history...');
-        }
-
-        function fetchMLStatus() {
-            console.log('Fetching ML status...');
-        }
-
-        function fetchCacheStatus() {
-            console.log('Fetching cache status...');
-        }
     </script>
 </body>
 </html>
