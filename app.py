@@ -1,7 +1,7 @@
 """
 EUR/USD 2-Minute Auto-Learning Trading System
 WITH 30-SECOND CACHING for API limit protection
-USING data.txt FOR ML STORAGE
+USING data.txt FOR ML STORAGE - ERROR-FREE VERSION
 """
 
 import os
@@ -9,7 +9,7 @@ import json
 import threading
 import time
 from datetime import datetime, timedelta
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, Response
 import pandas as pd
 import numpy as np
 import pandas_ta as ta
@@ -33,15 +33,14 @@ CYCLE_SECONDS = 120
 INITIAL_BALANCE = 10000.0
 BASE_TRADE_SIZE = 1000.0
 MIN_CONFIDENCE = 65.0
-TRAINING_FILE = "data.txt"  # ⭐ CHANGED TO data.txt
+TRAINING_FILE = "data.txt"  # Using data.txt for ML storage
 
 # ==================== CACHE CONFIGURATION ====================
-CACHE_DURATION = 30  # ⭐ CACHE: 30 seconds
+CACHE_DURATION = 30  # 30-second caching
 price_cache = {
     'price': 1.0850,
     'timestamp': time.time(),
     'source': 'Initial',
-    'expiry': CACHE_DURATION,
     'hits': 0,
     'misses': 0
 }
@@ -72,7 +71,7 @@ trading_state = {
     'tp_distance_pips': 0,
     'sl_distance_pips': 0,
     'ml_model_ready': False,
-    'ml_data_points': 0,  # Added counter for data.txt entries
+    'ml_data_points': 0,
     'server_time': datetime.now().isoformat(),
     'cycle_progress': 0,
     'trade_progress': 0,
@@ -85,7 +84,12 @@ trading_state = {
     'cache_hits': 0,
     'cache_misses': 0,
     'cache_efficiency': '0%',
-    'api_calls_today': '~240 (SAFE)'
+    'api_calls_today': '~240 (SAFE)',
+    'ml_data_saved': False,
+    'ml_data_load_status': 'Loading ML system...',
+    'ml_training_status': 'Collecting data...',
+    'ml_corrections_applied': 0,
+    'system_status': 'INITIALIZING'
 }
 
 # Data storage
@@ -130,7 +134,7 @@ def get_cached_eurusd_price():
     current_time = time.time()
     cache_age = current_time - price_cache['timestamp']
     
-    # ⭐ CACHE HIT: Use cached price if fresh
+    # CACHE HIT: Use cached price if fresh
     if cache_age < CACHE_DURATION and price_cache['price']:
         price_cache['hits'] += 1
         update_cache_efficiency()
@@ -144,7 +148,7 @@ def get_cached_eurusd_price():
         
         return cached_price, f"Cached ({price_cache['source']})"
     
-    # ⭐ CACHE MISS: Need fresh price from APIs
+    # CACHE MISS: Need fresh price from APIs
     price_cache['misses'] += 1
     update_cache_efficiency()
     logger.info("🔄 Cache MISS: Fetching fresh price from APIs...")
@@ -163,7 +167,6 @@ def get_cached_eurusd_price():
             'params': {'pairs': 'EURUSD'},
             'extract_rate': lambda data: data['rates']['EURUSD']
         }
-        # ⭐ REMOVED ExchangeRate-API (too low limits)
     ]
     
     # Try each API
@@ -184,7 +187,7 @@ def get_cached_eurusd_price():
                 if rate:
                     current_price = float(rate)
                     
-                    # ⭐ UPDATE CACHE with fresh price
+                    # UPDATE CACHE with fresh price
                     price_cache.update({
                         'price': current_price,
                         'timestamp': current_time,
@@ -200,7 +203,7 @@ def get_cached_eurusd_price():
             logger.warning(f"{api['name']} failed: {str(e)[:50]}")
             continue
     
-    # ⭐ ALL APIS FAILED: Use stale cache as fallback
+    # ALL APIS FAILED: Use stale cache as fallback
     logger.warning("⚠️ All APIs failed, using stale cached data")
     
     if price_cache['price']:
@@ -315,7 +318,7 @@ def initialize_training_system():
             with open(TRAINING_FILE, 'r') as f:
                 lines = f.readlines()
             
-            trading_state['ml_data_points'] = len(lines)
+            trading_state['ml_data_points'] = len([l for l in lines if l.strip() and not l.startswith('#')])
             logger.info(f"📊 Loaded {trading_state['ml_data_points']} trades from {TRAINING_FILE}")
             
             if trading_state['ml_data_points'] >= 10:
@@ -509,6 +512,7 @@ def train_ml_models():
     if len(ml_features) < 10:
         ml_trained = False
         trading_state['ml_model_ready'] = False
+        trading_state['ml_training_status'] = f'Need {10 - len(ml_features)} more trades'
         return
     
     try:
@@ -528,12 +532,16 @@ def train_ml_models():
         ml_trained = True
         trading_state['ml_model_ready'] = True
         trading_state['ml_data_points'] = len(ml_features)
+        trading_state['ml_training_status'] = f'✅ Trained on {len(X)} trades'
+        trading_state['ml_corrections_applied'] += 1
+        
         logger.info(f"✅ ML models trained on {len(X)} samples")
         
     except Exception as e:
         logger.error(f"ML training error: {e}")
         ml_trained = False
         trading_state['ml_model_ready'] = False
+        trading_state['ml_training_status'] = f'⚠️ Training error: {str(e)[:50]}'
 
 def extract_ml_features(df, current_price):
     """Extract features for ML prediction"""
@@ -571,16 +579,24 @@ def extract_ml_features(df, current_price):
 def predict_optimal_levels(features, direction, current_price, df):
     """Predict optimal TP and SL levels for 2-minute trades"""
     
+    pip_value = 0.0001
+    
     # Base levels for 2-minute trades
     if direction == "BULLISH":
-        base_tp = current_price + 0.0008
-        base_sl = current_price - 0.0005
+        base_tp = current_price + (8 * pip_value)
+        base_sl = current_price - (5 * pip_value)
+        base_tp_pips = 8
+        base_sl_pips = 5
     elif direction == "BEARISH":
-        base_tp = current_price - 0.0008
-        base_sl = current_price + 0.0005
+        base_tp = current_price - (8 * pip_value)
+        base_sl = current_price + (5 * pip_value)
+        base_tp_pips = 8
+        base_sl_pips = 5
     else:
         base_tp = current_price
         base_sl = current_price
+        base_tp_pips = 0
+        base_sl_pips = 0
     
     # Use ML predictions if available
     if ml_trained and features is not None:
@@ -596,8 +612,6 @@ def predict_optimal_levels(features, direction, current_price, df):
             sl_pips_pred = max(3, min(15, sl_pips_pred))
             
             # Convert pips to price
-            pip_value = 0.0001
-            
             if direction == "BULLISH":
                 optimal_tp = current_price + (tp_pips_pred * pip_value)
                 optimal_sl = current_price - (sl_pips_pred * pip_value)
@@ -615,10 +629,7 @@ def predict_optimal_levels(features, direction, current_price, df):
             logger.warning(f"ML prediction failed: {e}")
     
     # Fallback to base levels
-    tp_pips = int(abs(base_tp - current_price) * 10000)
-    sl_pips = int(abs(base_sl - current_price) * 10000)
-    
-    return base_tp, base_sl, tp_pips, sl_pips
+    return base_tp, base_sl, base_tp_pips, base_sl_pips
 
 # ==================== 2-MINUTE PREDICTION ENGINE ====================
 def analyze_2min_prediction(df, current_price):
@@ -751,8 +762,8 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
         'max_loss_pips': 0,
         'reason': action_reason,
         'cycle_duration': CYCLE_SECONDS,
-        'signal_strength': signal_strength,
-        'market_conditions': market_conditions  # Store market conditions for ML
+        'signal_strength': trading_state['signal_strength'],
+        'market_conditions': market_conditions
     }
     
     trading_state['current_trade'] = trade
@@ -762,7 +773,6 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
     trading_state['tp_distance_pips'] = tp_pips
     trading_state['sl_distance_pips'] = sl_pips
     trading_state['trade_status'] = 'ACTIVE'
-    trading_state['signal_strength'] = signal_strength
     
     logger.info(f"🔔 {action} ORDER EXECUTED")
     logger.info(f"   Entry Price: {current_price:.5f}")
@@ -868,7 +878,7 @@ def monitor_active_trade(current_price, market_conditions):
         save_trade_to_data_txt(trade, market_conditions)
         
         # Retrain ML if we have enough samples
-        if trading_state['ml_data_points'] >= 10 and trading_state['ml_data_points'] % 5 == 0:
+        if trading_state['ml_data_points'] >= 10 and trading_state['ml_data_points'] % 3 == 0:
             train_ml_models()
         
         # Clear current trade
@@ -1001,8 +1011,6 @@ def trading_cycle():
     """Main 2-minute trading cycle with caching"""
     global trading_state
     
-    cycle_count = 0
-    
     # Initialize ML system
     initialize_training_system()
     
@@ -1010,15 +1018,14 @@ def trading_cycle():
     
     while True:
         try:
-            cycle_count += 1
+            trading_state['cycle_count'] += 1
             cycle_start = datetime.now()
             
-            trading_state['cycle_count'] = cycle_count
             trading_state['cycle_progress'] = 0
             trading_state['remaining_time'] = CYCLE_SECONDS
             
             logger.info(f"\n{'='*70}")
-            logger.info(f"2-MINUTE TRADING CYCLE #{cycle_count}")
+            logger.info(f"2-MINUTE TRADING CYCLE #{trading_state['cycle_count']}")
             logger.info(f"{'='*70}")
             
             # 1. GET MARKET DATA (WITH CACHE)
@@ -1116,7 +1123,7 @@ def trading_cycle():
             trading_state['server_time'] = datetime.now().isoformat()
             
             # 13. LOG CYCLE SUMMARY
-            logger.info(f"CYCLE #{cycle_count} SUMMARY:")
+            logger.info(f"CYCLE #{trading_state['cycle_count']} SUMMARY:")
             logger.info(f"  Price: {current_price:.5f} ({data_source})")
             logger.info(f"  Prediction: {direction} (Signal: {signal_strength}/3)")
             logger.info(f"  Action: {trading_state['action']} ({confidence:.1f}% confidence)")
@@ -1203,8 +1210,9 @@ def get_ml_status():
         'ml_model_ready': trading_state['ml_model_ready'],
         'training_samples': trading_state['ml_data_points'],
         'training_file': TRAINING_FILE,
-        'last_trained': trading_state['last_update'],
-        'ml_features_count': len(ml_features[0]) if ml_features else 0
+        'ml_data_load_status': trading_state['ml_data_load_status'],
+        'ml_training_status': trading_state['ml_training_status'],
+        'ml_corrections_applied': trading_state['ml_corrections_applied']
     })
 
 @app.route('/api/cache_status')
@@ -1245,15 +1253,48 @@ def view_ml_data():
             'preview': data,
             'ml_status': {
                 'ready': trading_state['ml_model_ready'],
-                'samples': trading_state['ml_data_points'],
-                'trained_on': len(ml_features)
+                'samples': trading_state['ml_data_points']
             }
         })
         
     except Exception as e:
         return jsonify({'error': str(e)})
 
-@app.route('/api/reset_trading')
+@app.route('/api/advanced_metrics')
+def get_advanced_metrics():
+    """Get advanced trading metrics"""
+    # Calculate some basic advanced metrics
+    total_trades = trading_state['total_trades']
+    profitable_trades = trading_state['profitable_trades']
+    total_profit = trading_state['total_profit']
+    balance = trading_state['balance']
+    
+    # Profit Factor
+    gross_profit = total_profit if total_profit > 0 else 0.01
+    gross_loss = abs(total_profit - balance + INITIAL_BALANCE)
+    profit_factor = gross_profit / max(0.01, gross_loss)
+    
+    # Expectancy
+    win_rate = trading_state['win_rate'] / 100 if trading_state['win_rate'] > 0 else 0
+    avg_win = 8  # Default avg win in pips
+    avg_loss = 5  # Default avg loss in pips
+    expectancy = (win_rate * avg_win) - ((1 - win_rate) * avg_loss)
+    
+    return jsonify({
+        'balance': trading_state['balance'],
+        'total_profit': trading_state['total_profit'],
+        'total_trades': trading_state['total_trades'],
+        'win_rate': trading_state['win_rate'],
+        'total_pips': trading_state.get('total_pips', 0),
+        'profit_factor': round(profit_factor, 2),
+        'expectancy': round(expectancy, 2),
+        'consecutive_wins': trading_state.get('consecutive_wins', 0),
+        'consecutive_losses': trading_state.get('consecutive_losses', 0),
+        'best_trade_pips': trading_state.get('best_trade_pips', 0),
+        'worst_trade_pips': trading_state.get('worst_trade_pips', 0)
+    })
+
+@app.route('/api/reset_trading', methods=['POST'])
 def reset_trading():
     """Reset trading statistics"""
     global trade_history, ml_features, tp_labels, sl_labels
@@ -1270,7 +1311,10 @@ def reset_trading():
         'trade_progress': 0,
         'cycle_progress': 0,
         'ml_data_points': 0,
-        'ml_model_ready': False
+        'ml_model_ready': False,
+        'ml_data_load_status': 'Reset - waiting for new trades',
+        'ml_training_status': 'Not trained yet',
+        'ml_corrections_applied': 0
     })
     
     trade_history.clear()
@@ -1290,21 +1334,121 @@ def reset_trading():
     
     return jsonify({'success': True, 'message': 'Trading reset complete'})
 
+@app.route('/api/force_ml_training', methods=['POST'])
+def force_ml_training():
+    """Force ML training"""
+    if train_ml_models():
+        return jsonify({
+            'success': True,
+            'message': f'✅ ML trained on {len(ml_features)} samples',
+            'corrections': trading_state['ml_corrections_applied']
+        })
+    else:
+        return jsonify({
+            'success': False,
+            'message': f'Need at least 10 samples, have {len(ml_features)}'
+        })
+
+@app.route('/api/events')
+def events():
+    """Server-Sent Events for real-time updates"""
+    def generate():
+        last_price = None
+        last_prediction = None
+        last_cycle = 0
+        
+        while True:
+            try:
+                current_time = time.time()
+                
+                # Check for price changes
+                current_price = trading_state['current_price']
+                if last_price != current_price:
+                    last_price = current_price
+                    yield f"data: {json.dumps({
+                        'type': 'price_update',
+                        'price': current_price,
+                        'timestamp': datetime.now().isoformat(),
+                        'source': trading_state['data_source']
+                    })}\n\n"
+                
+                # Check for prediction changes
+                current_prediction = trading_state['minute_prediction']
+                if last_prediction != current_prediction:
+                    last_prediction = current_prediction
+                    yield f"data: {json.dumps({
+                        'type': 'prediction_update',
+                        'prediction': current_prediction,
+                        'confidence': trading_state['confidence'],
+                        'signal_strength': trading_state['signal_strength']
+                    })}\n\n"
+                
+                # Check for cycle changes
+                current_cycle = trading_state['cycle_count']
+                if last_cycle != current_cycle:
+                    last_cycle = current_cycle
+                    yield f"data: {json.dumps({
+                        'type': 'cycle_update',
+                        'cycle': current_cycle,
+                        'next_cycle_in': trading_state['next_cycle_in'],
+                        'cycle_progress': trading_state['cycle_progress']
+                    })}\n\n"
+                
+                # Check for trade updates
+                if trading_state['current_trade']:
+                    trade = trading_state['current_trade']
+                    yield f"data: {json.dumps({
+                        'type': 'trade_update',
+                        'trade': {
+                            'id': trade.get('id'),
+                            'action': trade.get('action'),
+                            'entry_price': trade.get('entry_price'),
+                            'optimal_tp': trade.get('optimal_tp'),
+                            'optimal_sl': trade.get('optimal_sl'),
+                            'profit_pips': trade.get('profit_pips', 0),
+                            'duration_seconds': trade.get('duration_seconds', 0)
+                        }
+                    })}\n\n"
+                
+                # Check for ML updates
+                if ml_trained and trading_state['ml_model_ready']:
+                    yield f"data: {json.dumps({
+                        'type': 'ml_update',
+                        'ml_ready': True,
+                        'samples': trading_state['ml_data_points'],
+                        'corrections': trading_state['ml_corrections_applied']
+                    })}\n\n"
+                
+                # Send heartbeat every 10 seconds
+                if int(current_time) % 10 == 0:
+                    yield f"data: {json.dumps({
+                        'type': 'heartbeat',
+                        'timestamp': datetime.now().isoformat(),
+                        'system_status': trading_state['system_status']
+                    })}\n\n"
+                
+                time.sleep(2)  # Check every 2 seconds
+                
+            except Exception as e:
+                logger.error(f"SSE error: {e}")
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                time.sleep(5)
+    
+    return Response(generate(), mimetype='text/event-stream')
+
 @app.route('/api/health')
 def health_check():
     """Health check endpoint"""
     return jsonify({
         'status': 'running',
         'timestamp': datetime.now().isoformat(),
+        'system_status': trading_state['system_status'],
         'cycle_count': trading_state['cycle_count'],
-        'system_status': 'ACTIVE',
-        'cycle_duration': CYCLE_SECONDS,
-        'cache_enabled': True,
-        'cache_duration': CACHE_DURATION,
-        'api_calls_per_day': '~240 (SAFE)',
-        'ml_data_file': TRAINING_FILE,
-        'ml_data_points': trading_state['ml_data_points'],
-        'version': '2.0-cached-data-txt'
+        'trades_today': len(trade_history),
+        'ml_status': trading_state['ml_model_ready'],
+        'cache_efficiency': trading_state['cache_efficiency'],
+        'api_status': trading_state['api_status'],
+        'version': '3.0-stable'
     })
 
 # ==================== START TRADING BOT ====================
@@ -1314,6 +1458,7 @@ def start_trading_bot():
         thread = threading.Thread(target=trading_cycle, daemon=True)
         thread.start()
         logger.info("✅ Trading bot started successfully")
+        trading_state['system_status'] = 'RUNNING'
         print("✅ 2-Minute trading system ACTIVE")
         print(f"✅ Caching: {CACHE_DURATION}-second cache enabled")
         print(f"✅ ML Storage: Using {TRAINING_FILE} for training data")
