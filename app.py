@@ -1,7 +1,7 @@
 """
 EUR/USD 2-Minute Auto-Learning Trading System
 WITH 30-SECOND CACHING for API limit protection
-USING data.txt FOR ML STORAGE - ERROR-FREE VERSION
+USING GITHUB FOR ML STORAGE - PERSISTENT VERSION
 """
 
 import os
@@ -18,9 +18,18 @@ import plotly.utils
 import requests
 import warnings
 import logging
+import base64
 from collections import deque
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
+
+# GitHub Integration
+try:
+    from github import Github, GithubException
+    GITHUB_AVAILABLE = True
+except ImportError:
+    print("⚠️ PyGithub not installed. Run: pip install PyGithub")
+    GITHUB_AVAILABLE = False
 
 warnings.filterwarnings('ignore')
 
@@ -33,7 +42,13 @@ CYCLE_SECONDS = 120
 INITIAL_BALANCE = 10000.0
 BASE_TRADE_SIZE = 1000.0
 MIN_CONFIDENCE = 65.0
-TRAINING_FILE = "data.txt"  # Using data.txt for ML storage
+
+# GitHub Configuration
+GITHUB_REPO_OWNER = "gicheha-ai"
+GITHUB_REPO_NAME = "m"
+GITHUB_DATA_FILE = "trading_data.txt"
+GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
+LOCAL_DATA_FILE = "data.txt"
 
 # ==================== CACHE CONFIGURATION ====================
 CACHE_DURATION = 30  # 30-second caching
@@ -89,7 +104,9 @@ trading_state = {
     'ml_data_load_status': 'Loading ML system...',
     'ml_training_status': 'Collecting data...',
     'ml_corrections_applied': 0,
-    'system_status': 'INITIALIZING'
+    'system_status': 'INITIALIZING',
+    'github_connected': False,
+    'github_status': 'Checking...'
 }
 
 # Data storage
@@ -113,9 +130,183 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# GitHub Manager Class
+class GitHubDataManager:
+    def __init__(self):
+        self.github = None
+        self.repo = None
+        self.connected = False
+        self.last_sync = None
+        
+    def connect(self):
+        """Connect to GitHub"""
+        if not GITHUB_AVAILABLE:
+            trading_state['github_status'] = 'PyGithub not installed'
+            logger.warning("PyGithub not installed. Install with: pip install PyGithub")
+            return False
+            
+        if not GITHUB_TOKEN:
+            trading_state['github_status'] = 'No GitHub token set'
+            logger.warning("GITHUB_TOKEN environment variable not set")
+            return False
+            
+        try:
+            self.github = Github(GITHUB_TOKEN)
+            # Test connection
+            user = self.github.get_user()
+            logger.info(f"✅ Connected to GitHub as: {user.login}")
+            
+            # Get repository
+            repo_full_name = f"{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}"
+            self.repo = self.github.get_repo(repo_full_name)
+            logger.info(f"✅ Connected to repository: {repo_full_name}")
+            
+            self.connected = True
+            trading_state['github_connected'] = True
+            trading_state['github_status'] = f'Connected to {repo_full_name}'
+            return True
+            
+        except GithubException as e:
+            error_msg = f"GitHub connection failed: {str(e)[:100]}"
+            logger.error(error_msg)
+            trading_state['github_status'] = error_msg
+            return False
+        except Exception as e:
+            error_msg = f"GitHub error: {str(e)[:100]}"
+            logger.error(error_msg)
+            trading_state['github_status'] = error_msg
+            return False
+    
+    def save_data(self, data):
+        """Save data to GitHub and locally"""
+        try:
+            # Save locally first
+            with open(LOCAL_DATA_FILE, 'a') as f:
+                f.write(json.dumps(data) + '\n')
+            
+            # Update local count
+            trading_state['ml_data_points'] += 1
+            
+            # Try to save to GitHub
+            if self.connected:
+                try:
+                    # Get current file content
+                    try:
+                        file_content = self.repo.get_contents(GITHUB_DATA_FILE)
+                        current_content = base64.b64decode(file_content.content).decode('utf-8')
+                        new_content = current_content + json.dumps(data) + '\n'
+                        
+                        # Update file
+                        self.repo.update_file(
+                            path=GITHUB_DATA_FILE,
+                            message=f"Auto-update trading data #{trading_state['ml_data_points']}",
+                            content=new_content,
+                            sha=file_content.sha
+                        )
+                        logger.info(f"✅ Data saved to GitHub (updated)")
+                        
+                    except GithubException:
+                        # File doesn't exist, create it
+                        self.repo.create_file(
+                            path=GITHUB_DATA_FILE,
+                            message="Create trading data file",
+                            content=json.dumps(data) + '\n'
+                        )
+                        logger.info(f"✅ Data saved to GitHub (created)")
+                    
+                    self.last_sync = datetime.now()
+                    trading_state['github_status'] = f'Synced {trading_state["ml_data_points"]} trades'
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ GitHub save failed: {e}. Data saved locally only.")
+                    trading_state['github_status'] = f'Local only: {str(e)[:50]}'
+            else:
+                logger.info("Data saved locally (GitHub not connected)")
+                trading_state['github_status'] = 'Local storage only'
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error saving data: {e}")
+            return False
+    
+    def load_data(self):
+        """Load data from GitHub or local file"""
+        data_lines = []
+        
+        # First try GitHub
+        if self.connected:
+            try:
+                file_content = self.repo.get_contents(GITHUB_DATA_FILE)
+                content = base64.b64decode(file_content.content).decode('utf-8')
+                data_lines = [line.strip() for line in content.split('\n') if line.strip()]
+                logger.info(f"✅ Loaded {len(data_lines)} trades from GitHub")
+                trading_state['github_status'] = f'Loaded {len(data_lines)} trades from GitHub'
+                
+                # Save local copy
+                with open(LOCAL_DATA_FILE, 'w') as f:
+                    f.write(content)
+                
+            except GithubException:
+                logger.info("No data file on GitHub, checking local file")
+                # GitHub file doesn't exist, check local
+                if os.path.exists(LOCAL_DATA_FILE):
+                    with open(LOCAL_DATA_FILE, 'r') as f:
+                        data_lines = [line.strip() for line in f if line.strip()]
+                    logger.info(f"📊 Loaded {len(data_lines)} trades from local file")
+                    trading_state['github_status'] = f'Loaded {len(data_lines)} trades locally'
+        else:
+            # GitHub not connected, use local file
+            if os.path.exists(LOCAL_DATA_FILE):
+                with open(LOCAL_DATA_FILE, 'r') as f:
+                    data_lines = [line.strip() for line in f if line.strip()]
+                logger.info(f"📊 Loaded {len(data_lines)} trades from local file")
+                trading_state['github_status'] = f'Loaded {len(data_lines)} trades locally'
+        
+        trading_state['ml_data_points'] = len(data_lines)
+        return data_lines
+    
+    def backup_all_data(self):
+        """Backup all local data to GitHub"""
+        if not self.connected:
+            return False
+            
+        try:
+            if os.path.exists(LOCAL_DATA_FILE):
+                with open(LOCAL_DATA_FILE, 'r') as f:
+                    content = f.read()
+                
+                try:
+                    # Try to update
+                    file_content = self.repo.get_contents(GITHUB_DATA_FILE)
+                    self.repo.update_file(
+                        path=GITHUB_DATA_FILE,
+                        message=f"Full backup {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                        content=content,
+                        sha=file_content.sha
+                    )
+                except GithubException:
+                    # Create new
+                    self.repo.create_file(
+                        path=GITHUB_DATA_FILE,
+                        message="Full backup - initial",
+                        content=content
+                    )
+                
+                logger.info("✅ Full backup completed to GitHub")
+                return True
+        except Exception as e:
+            logger.error(f"❌ Backup failed: {e}")
+            return False
+        
+        return False
+
+# Initialize GitHub Manager
+github_manager = GitHubDataManager()
+
 # Print startup banner
 print("="*80)
-print("EUR/USD 2-MINUTE TRADING SYSTEM WITH CACHING")
+print("EUR/USD 2-MINUTE TRADING SYSTEM WITH GITHUB STORAGE")
 print("="*80)
 print(f"Cycle: Predict and trade every {CYCLE_MINUTES} minutes ({CYCLE_SECONDS} seconds)")
 print(f"Cache Duration: {CACHE_DURATION} seconds (66% API reduction)")
@@ -123,8 +314,19 @@ print(f"API Calls/Day: ~240 (SAFE for all free limits)")
 print(f"Goal: Hit TP before SL within {CYCLE_SECONDS} seconds")
 print(f"Initial Balance: ${INITIAL_BALANCE:,.2f}")
 print(f"Trade Size: ${BASE_TRADE_SIZE:,.2f}")
-print(f"ML Training File: {TRAINING_FILE}")
+print(f"GitHub Repo: {GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}")
+print(f"Data File: {GITHUB_DATA_FILE}")
 print("="*80)
+
+# Try to connect to GitHub
+if github_manager.connect():
+    print("✅ GitHub connection successful")
+    print(f"✅ Data will be saved to: https://github.com/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/blob/main/{GITHUB_DATA_FILE}")
+else:
+    print("⚠️ GitHub not connected. Data will be saved locally only.")
+    print("ℹ️ Set GITHUB_TOKEN environment variable to enable GitHub storage")
+    print("ℹ️ Create token: GitHub → Settings → Developer Settings → Personal Access Tokens")
+
 print("Starting system...")
 
 # ==================== CACHED FOREX DATA FETCHING ====================
@@ -309,57 +511,41 @@ def calculate_advanced_indicators(prices):
 
 # ==================== ML TRAINING SYSTEM ====================
 def initialize_training_system():
-    """Initialize or load ML training data from data.txt"""
+    """Initialize or load ML training data from GitHub/local"""
     global ml_features, tp_labels, sl_labels, ml_trained
     
     try:
-        # Check if data.txt exists
-        if os.path.exists(TRAINING_FILE):
-            with open(TRAINING_FILE, 'r') as f:
-                lines = f.readlines()
-            
-            trading_state['ml_data_points'] = len([l for l in lines if l.strip() and not l.startswith('#')])
-            logger.info(f"📊 Loaded {trading_state['ml_data_points']} trades from {TRAINING_FILE}")
-            
-            if trading_state['ml_data_points'] >= 10:
-                # Load and process training data
-                load_ml_training_data()
-                if len(ml_features) >= 10:
-                    train_ml_models()
-                    logger.info(f"✅ ML system loaded with {len(ml_features)} training samples")
-                else:
-                    logger.info(f"⚠️  {len(ml_features)} valid samples - collecting more data")
+        # Load data from GitHub/local
+        data_lines = github_manager.load_data()
+        
+        trading_state['ml_data_points'] = len([l for l in data_lines if l.strip() and not l.startswith('#')])
+        logger.info(f"📊 Loaded {trading_state['ml_data_points']} trades from storage")
+        
+        if trading_state['ml_data_points'] >= 10:
+            # Load and process training data
+            load_ml_training_data(data_lines)
+            if len(ml_features) >= 10:
+                train_ml_models()
+                logger.info(f"✅ ML system loaded with {len(ml_features)} training samples")
             else:
-                logger.info(f"📊 Collecting data: {trading_state['ml_data_points']}/10 trades")
-                
+                logger.info(f"⚠️  {len(ml_features)} valid samples - collecting more data")
         else:
-            # Create empty data.txt with header
-            with open(TRAINING_FILE, 'w') as f:
-                f.write('# EUR/USD Trading Data - ML Training\n')
-                f.write('# Format: JSON per line with trade data\n')
-            trading_state['ml_data_points'] = 0
-            logger.info("📝 Created new data.txt file")
+            logger.info(f"📊 Collecting data: {trading_state['ml_data_points']}/10 trades")
             
     except Exception as e:
         logger.error(f"❌ ML initialization error: {e}")
         trading_state['ml_model_ready'] = False
 
-def load_ml_training_data():
-    """Load and process ML training data from data.txt"""
+def load_ml_training_data(data_lines):
+    """Load and process ML training data"""
     global ml_features, tp_labels, sl_labels
     
     try:
-        if not os.path.exists(TRAINING_FILE):
-            return
-        
-        with open(TRAINING_FILE, 'r') as f:
-            lines = f.readlines()
-        
         features = []
         tp_vals = []
         sl_vals = []
         
-        for line in lines:
+        for line in data_lines:
             try:
                 if line.strip() and not line.startswith('#'):
                     data = json.loads(line.strip())
@@ -384,7 +570,7 @@ def load_ml_training_data():
         tp_labels = tp_vals
         sl_labels = sl_vals
         
-        logger.info(f"📊 Processed {len(features)} training samples from {TRAINING_FILE}")
+        logger.info(f"📊 Processed {len(features)} training samples")
         
     except Exception as e:
         logger.error(f"❌ Error loading training data: {e}")
@@ -456,8 +642,8 @@ def calculate_optimal_levels_from_trade(trade_data):
         logger.debug(f"Optimal level calculation error: {e}")
         return 8, 5  # Default values
 
-def save_trade_to_data_txt(trade_data, market_conditions):
-    """Save trade data to data.txt for ML training"""
+def save_trade_to_storage(trade_data, market_conditions):
+    """Save trade data to GitHub/local for ML training"""
     try:
         # Prepare comprehensive trade data
         ml_trade_data = {
@@ -483,26 +669,26 @@ def save_trade_to_data_txt(trade_data, market_conditions):
             'cycle_number': trading_state['cycle_count']
         }
         
-        # Save to data.txt (append mode)
-        with open(TRAINING_FILE, 'a') as f:
-            f.write(json.dumps(ml_trade_data) + '\n')
+        # Save using GitHub manager
+        success = github_manager.save_data(ml_trade_data)
         
-        # Update counters
-        trading_state['ml_data_points'] += 1
-        
-        # Add to ML training data
-        feature_vector = extract_ml_features_from_trade(ml_trade_data)
-        if feature_vector:
-            optimal_tp, optimal_sl = calculate_optimal_levels_from_trade(ml_trade_data)
-            ml_features.append(feature_vector)
-            tp_labels.append(optimal_tp)
-            sl_labels.append(optimal_sl)
-        
-        logger.info(f"✅ Trade #{trade_data.get('id')} saved to {TRAINING_FILE}")
-        return True
+        if success:
+            # Add to ML training data
+            feature_vector = extract_ml_features_from_trade(ml_trade_data)
+            if feature_vector:
+                optimal_tp, optimal_sl = calculate_optimal_levels_from_trade(ml_trade_data)
+                ml_features.append(feature_vector)
+                tp_labels.append(optimal_tp)
+                sl_labels.append(optimal_sl)
+            
+            logger.info(f"✅ Trade #{trade_data.get('id')} saved to storage")
+            return True
+        else:
+            logger.error(f"❌ Error saving trade to storage")
+            return False
         
     except Exception as e:
-        logger.error(f"❌ Error saving trade to {TRAINING_FILE}: {e}")
+        logger.error(f"❌ Error saving trade: {e}")
         return False
 
 def train_ml_models():
@@ -874,8 +1060,8 @@ def monitor_active_trade(current_price, market_conditions):
         # Add to history
         trade_history.append(trade.copy())
         
-        # Save to data.txt for ML training
-        save_trade_to_data_txt(trade, market_conditions)
+        # Save to GitHub/local storage for ML training
+        save_trade_to_storage(trade, market_conditions)
         
         # Retrain ML if we have enough samples
         if trading_state['ml_data_points'] >= 10 and trading_state['ml_data_points'] % 3 == 0:
@@ -1014,7 +1200,7 @@ def trading_cycle():
     # Initialize ML system
     initialize_training_system()
     
-    logger.info("✅ Trading bot started with 2-minute cycles and caching")
+    logger.info("✅ Trading bot started with 2-minute cycles and GitHub storage")
     
     while True:
         try:
@@ -1119,7 +1305,7 @@ def trading_cycle():
             trading_state['price_history'] = list(price_history_deque)[-20:]
             
             # 12. UPDATE TIMESTAMP
-            trading_state['last_update'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            trading_state['last_update'] = datetime.now().strftime('%Y-%m-d %H:%M:%S')
             trading_state['server_time'] = datetime.now().isoformat()
             
             # 13. LOG CYCLE SUMMARY
@@ -1131,7 +1317,8 @@ def trading_cycle():
             logger.info(f"  Balance: ${trading_state['balance']:.2f}")
             logger.info(f"  Win Rate: {trading_state['win_rate']:.1f}%")
             logger.info(f"  ML Ready: {trading_state['ml_model_ready']}")
-            logger.info(f"  Data Points: {trading_state['ml_data_points']} trades in data.txt")
+            logger.info(f"  Data Points: {trading_state['ml_data_points']} trades (GitHub: {github_manager.connected})")
+            logger.info(f"  GitHub Status: {trading_state['github_status']}")
             logger.info(f"  Cache Efficiency: {trading_state['cache_efficiency']}")
             logger.info(f"  API Calls/Day: ~240 (SAFE)")
             logger.info(f"  Next cycle in: {next_cycle_time}s")
@@ -1209,10 +1396,12 @@ def get_ml_status():
     return jsonify({
         'ml_model_ready': trading_state['ml_model_ready'],
         'training_samples': trading_state['ml_data_points'],
-        'training_file': TRAINING_FILE,
+        'training_file': 'GitHub Storage',
         'ml_data_load_status': trading_state['ml_data_load_status'],
         'ml_training_status': trading_state['ml_training_status'],
-        'ml_corrections_applied': trading_state['ml_corrections_applied']
+        'ml_corrections_applied': trading_state['ml_corrections_applied'],
+        'github_connected': trading_state['github_connected'],
+        'github_status': trading_state['github_status']
     })
 
 @app.route('/api/cache_status')
@@ -1231,16 +1420,15 @@ def get_cache_status():
 
 @app.route('/api/view_ml_data')
 def view_ml_data():
-    """View ML training data from data.txt"""
+    """View ML training data"""
     try:
-        if not os.path.exists(TRAINING_FILE):
-            return jsonify({'error': f'{TRAINING_FILE} not found'})
-        
-        with open(TRAINING_FILE, 'r') as f:
-            lines = f.readlines()
+        data_lines = []
+        if os.path.exists(LOCAL_DATA_FILE):
+            with open(LOCAL_DATA_FILE, 'r') as f:
+                data_lines = f.readlines()
         
         data = []
-        for line in lines[:20]:  # First 20 lines only
+        for line in data_lines[:20]:  # First 20 lines only
             if line.strip() and not line.startswith('#'):
                 try:
                     data.append(json.loads(line.strip()))
@@ -1248,12 +1436,18 @@ def view_ml_data():
                     continue
         
         return jsonify({
-            'file': TRAINING_FILE,
-            'total_lines': len(lines),
+            'file': 'GitHub Storage' if trading_state['github_connected'] else 'Local Storage',
+            'total_lines': len(data_lines),
             'preview': data,
             'ml_status': {
                 'ready': trading_state['ml_model_ready'],
                 'samples': trading_state['ml_data_points']
+            },
+            'github': {
+                'connected': trading_state['github_connected'],
+                'status': trading_state['github_status'],
+                'repo': f'{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}',
+                'file_url': f'https://github.com/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/blob/main/{GITHUB_DATA_FILE}' if trading_state['github_connected'] else None
             }
         })
         
@@ -1322,15 +1516,21 @@ def reset_trading():
     tp_labels.clear()
     sl_labels.clear()
     
-    # Reset data.txt
+    # Reset local file
     try:
-        with open(TRAINING_FILE, 'w') as f:
+        with open(LOCAL_DATA_FILE, 'w') as f:
             f.write('# EUR/USD Trading Data - ML Training\n')
             f.write('# Format: JSON per line with trade data\n')
             f.write('# System reset at: ' + datetime.now().isoformat() + '\n')
-        logger.info(f"📝 Reset {TRAINING_FILE}")
+        logger.info(f"📝 Reset local data file")
+        
+        # Also reset on GitHub if connected
+        if github_manager.connected:
+            github_manager.backup_all_data()
+            logger.info("📝 GitHub data file reset")
+            
     except Exception as e:
-        logger.error(f"Error resetting {TRAINING_FILE}: {e}")
+        logger.error(f"Error resetting data file: {e}")
     
     return jsonify({'success': True, 'message': 'Trading reset complete'})
 
@@ -1347,6 +1547,22 @@ def force_ml_training():
         return jsonify({
             'success': False,
             'message': f'Need at least 10 samples, have {len(ml_features)}'
+        })
+
+@app.route('/api/sync_github', methods=['POST'])
+def sync_github():
+    """Manually sync data with GitHub"""
+    if github_manager.backup_all_data():
+        return jsonify({
+            'success': True,
+            'message': '✅ Data synced with GitHub',
+            'github_status': trading_state['github_status']
+        })
+    else:
+        return jsonify({
+            'success': False,
+            'message': '❌ GitHub sync failed',
+            'github_status': trading_state['github_status']
         })
 
 @app.route('/api/events')
@@ -1416,7 +1632,8 @@ def events():
                         'type': 'ml_update',
                         'ml_ready': True,
                         'samples': trading_state['ml_data_points'],
-                        'corrections': trading_state['ml_corrections_applied']
+                        'corrections': trading_state['ml_corrections_applied'],
+                        'github_status': trading_state['github_status']
                     })}\n\n"
                 
                 # Send heartbeat every 10 seconds
@@ -1424,7 +1641,8 @@ def events():
                     yield f"data: {json.dumps({
                         'type': 'heartbeat',
                         'timestamp': datetime.now().isoformat(),
-                        'system_status': trading_state['system_status']
+                        'system_status': trading_state['system_status'],
+                        'github_connected': trading_state['github_connected']
                     })}\n\n"
                 
                 time.sleep(2)  # Check every 2 seconds
@@ -1448,7 +1666,10 @@ def health_check():
         'ml_status': trading_state['ml_model_ready'],
         'cache_efficiency': trading_state['cache_efficiency'],
         'api_status': trading_state['api_status'],
-        'version': '3.0-stable'
+        'github_connected': trading_state['github_connected'],
+        'github_status': trading_state['github_status'],
+        'data_points': trading_state['ml_data_points'],
+        'version': '4.0-github-storage'
     })
 
 # ==================== START TRADING BOT ====================
@@ -1459,11 +1680,25 @@ def start_trading_bot():
         thread.start()
         logger.info("✅ Trading bot started successfully")
         trading_state['system_status'] = 'RUNNING'
+        
+        print("="*80)
         print("✅ 2-Minute trading system ACTIVE")
         print(f"✅ Caching: {CACHE_DURATION}-second cache enabled")
-        print(f"✅ ML Storage: Using {TRAINING_FILE} for training data")
+        print(f"✅ GitHub Repo: {GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}")
+        print(f"✅ GitHub Connected: {trading_state['github_connected']}")
+        print(f"✅ Data Storage: {'GitHub + Local' if trading_state['github_connected'] else 'Local Only'}")
         print("✅ API Calls/Day: ~240 (SAFE for all free limits)")
-        print(f"✅ ML Training: Ready after 10 trades (data.txt)")
+        print(f"✅ ML Training: Ready after 10 trades")
+        print("="*80)
+        
+        if trading_state['github_connected']:
+            print(f"🔗 View your data: https://github.com/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/blob/main/{GITHUB_DATA_FILE}")
+            print("💾 Data will persist even when app sleeps!")
+        else:
+            print("⚠️  GitHub not connected. Data may be lost when app sleeps.")
+            print("ℹ️  Set GITHUB_TOKEN environment variable to enable persistent storage")
+        print("="*80)
+        
     except Exception as e:
         logger.error(f"❌ Error starting trading bot: {e}")
         print(f"❌ Error: {e}")
@@ -1477,13 +1712,12 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"🌐 Web dashboard: http://localhost:{port}")
     print("="*80)
-    print("API-SAFE SYSTEM READY WITH data.txt STORAGE")
+    print("API-SAFE SYSTEM READY WITH GITHUB STORAGE")
     print(f"• 2-minute cycles with {CACHE_DURATION}-second caching")
     print(f"• API calls: ~240/day (66% reduction)")
-    print(f"• Frankfurter limit: 1000/day → 24% used ✅")
-    print(f"• FreeForexAPI limit: 2400/day → 10% used ✅")
-    print(f"• ML training data: {TRAINING_FILE}")
-    print(f"• ML training: After 10 trades in data.txt")
+    print(f"• GitHub Storage: {'ENABLED ✅' if trading_state['github_connected'] else 'DISABLED ⚠️'}")
+    print(f"• Local backup: data.txt")
+    print(f"• ML training: After 10 trades")
     print("="*80)
     
     app.run(

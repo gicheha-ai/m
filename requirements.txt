@@ -6,3 +6,4 @@ pandas-ta
 plotly
 requests
 gunicorn
+PyGithub
