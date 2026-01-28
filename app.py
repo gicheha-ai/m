@@ -35,11 +35,11 @@ BASE_TRADE_SIZE = 1000.0
 MIN_CONFIDENCE = 65.0
 
 # ==================== GOOGLE SHEETS CONFIGURATION ====================
-SHEETDB_API_URL = "https://sheetdb.io/api/v1/lfjhagwynpocp"  # Your SheetDB endpoint
+SHEETDB_API_URL = "https://sheetdb.io/api/v1/lfjhagwynpocp"
 GOOGLE_SHEETS_ENABLED = True
 
 # ==================== CACHE CONFIGURATION ====================
-CACHE_DURATION = 30  # ⭐ CACHE: 30 seconds
+CACHE_DURATION = 30
 price_cache = {
     'price': 1.0850,
     'timestamp': time.time(),
@@ -105,7 +105,7 @@ tp_labels = []
 sl_labels = []
 ml_trained = False
 
-# Trading bot thread control
+# Trading bot thread
 trading_thread = None
 trading_active = True
 
@@ -137,7 +137,6 @@ def save_trade_to_google_sheets(trade_data):
         return {'success': False, 'message': 'Google Sheets disabled'}
     
     try:
-        # Format trade data for SheetDB
         sheetdb_data = {
             "data": [trade_data]
         }
@@ -154,7 +153,7 @@ def save_trade_to_google_sheets(trade_data):
             trading_state['google_sheets_status'] = 'CONNECTED'
             return {'success': True, 'data': response.json()}
         else:
-            logger.warning(f"⚠️  SheetDB API error: {response.status_code} - {response.text[:100]}")
+            logger.warning(f"⚠️  SheetDB API error: {response.status_code}")
             trading_state['google_sheets_status'] = f'ERROR: {response.status_code}'
             return {'success': False, 'error': f'API Error {response.status_code}'}
             
@@ -196,17 +195,13 @@ def initialize_google_sheets():
     try:
         logger.info("Initializing Google Sheets connection...")
         
-        # Test connection
         test_response = requests.get(SHEETDB_API_URL, timeout=5)
         
         if test_response.status_code == 200:
-            # Load existing trades
             existing_trades = get_trades_from_google_sheets()
             
             if existing_trades:
-                # Convert to our format
                 for trade in existing_trades:
-                    # Convert numeric fields
                     numeric_fields = ['trade_id', 'entry_price', 'exit_price', 'profit_pips', 
                                     'confidence', 'duration_seconds', 'cycle_number', 
                                     'signal_strength', 'sl_distance_pips', 'tp_distance_pips']
@@ -220,7 +215,6 @@ def initialize_google_sheets():
                 trade_history.extend(existing_trades)
                 trading_state['total_trades'] = len(existing_trades)
                 
-                # Count profitable trades
                 profitable = sum(1 for t in existing_trades 
                                if t.get('result') in ['SUCCESS', 'WIN', 'PARTIAL_SUCCESS'])
                 trading_state['profitable_trades'] = profitable
@@ -250,26 +244,22 @@ def get_cached_eurusd_price():
     current_time = time.time()
     cache_age = current_time - price_cache['timestamp']
     
-    # ⭐ CACHE HIT: Use cached price if fresh
     if cache_age < CACHE_DURATION and price_cache['price']:
         price_cache['hits'] += 1
         update_cache_efficiency()
         
-        # Add tiny realistic fluctuation
         tiny_change = np.random.uniform(-0.00001, 0.00001)
         cached_price = price_cache['price'] + tiny_change
         
-        logger.debug(f"📦 CACHE HIT: Using cached price {cached_price:.5f} (age: {cache_age:.1f}s)")
+        logger.debug(f"📦 CACHE HIT: Using cached price {cached_price:.5f}")
         trading_state['api_status'] = f"CACHED ({price_cache['source']})"
         
         return cached_price, f"Cached ({price_cache['source']})"
     
-    # ⭐ CACHE MISS: Need fresh price
     price_cache['misses'] += 1
     update_cache_efficiency()
     logger.info("🔄 Cache MISS: Fetching fresh price from APIs...")
     
-    # List of APIs
     apis_to_try = [
         {
             'name': 'Frankfurter',
@@ -285,7 +275,6 @@ def get_cached_eurusd_price():
         }
     ]
     
-    # Try each API
     for api in apis_to_try:
         try:
             logger.info(f"Trying {api['name']} API...")
@@ -302,14 +291,13 @@ def get_cached_eurusd_price():
                 if rate:
                     current_price = float(rate)
                     
-                    # ⭐ UPDATE CACHE
                     price_cache.update({
                         'price': current_price,
                         'timestamp': current_time,
                         'source': api['name']
                     })
                     
-                    logger.info(f"✅ {api['name']}: EUR/USD = {current_price:.5f} (cached)")
+                    logger.info(f"✅ {api['name']}: EUR/USD = {current_price:.5f}")
                     trading_state['api_status'] = 'CONNECTED'
                     
                     return current_price, api['name']
@@ -318,14 +306,12 @@ def get_cached_eurusd_price():
             logger.warning(f"{api['name']} failed: {str(e)[:50]}")
             continue
     
-    # ⭐ ALL APIS FAILED: Use stale cache
     logger.warning("⚠️ All APIs failed, using stale cached data")
     
     if price_cache['price']:
         stale_change = np.random.uniform(-0.00005, 0.00005)
         stale_price = price_cache['price'] + stale_change
         
-        # Keep in reasonable range
         if stale_price < 1.0800:
             stale_price = 1.0800 + abs(stale_change)
         elif stale_price > 1.0900:
@@ -334,7 +320,6 @@ def get_cached_eurusd_price():
         trading_state['api_status'] = 'STALE_CACHE'
         return stale_price, f"Stale Cache ({price_cache['source']})"
     else:
-        # First run
         trading_state['api_status'] = 'SIMULATION'
         return 1.0850, 'Simulation (Initial)'
 
@@ -372,43 +357,35 @@ def calculate_advanced_indicators(prices):
     df = pd.DataFrame(prices, columns=['close'])
     
     try:
-        # Price momentum
         df['returns_1'] = df['close'].pct_change(1)
         df['returns_5'] = df['close'].pct_change(5)
         df['returns_10'] = df['close'].pct_change(10)
         df['momentum_20'] = df['close'] - df['close'].shift(20)
         
-        # Moving averages
         df['sma_5'] = ta.sma(df['close'], length=5)
         df['sma_10'] = ta.sma(df['close'], length=10)
         df['ema_12'] = ta.ema(df['close'], length=12)
         df['ema_26'] = ta.ema(df['close'], length=26)
         
-        # RSI
         df['rsi'] = ta.rsi(df['close'], length=14)
         
-        # MACD
         macd = ta.macd(df['close'])
         if macd is not None and isinstance(macd, pd.DataFrame):
             df['macd'] = macd['MACD_12_26_9']
             df['macd_signal'] = macd['MACDs_12_26_9']
             df['macd_hist'] = macd['MACDh_12_26_9']
         
-        # Bollinger Bands
         bb = ta.bbands(df['close'], length=20)
         if bb is not None and isinstance(bb, pd.DataFrame):
             df['bb_upper'] = bb['BBU_20_2.0']
             df['bb_lower'] = bb['BBL_20_2.0']
             df['bb_percent'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower']) * 100
         
-        # ATR for volatility
         df['atr'] = ta.atr(df['close'], df['close'], df['close'], length=14)
         
-        # Market condition flags
         df['overbought'] = (df['rsi'] > 70).astype(int)
         df['oversold'] = (df['rsi'] < 30).astype(int)
         
-        # Fill NaN values
         df = df.fillna(method='ffill').fillna(method='bfill').fillna(0)
         
         return df
@@ -426,8 +403,7 @@ def initialize_training_system():
         try:
             logger.info(f"Starting ML training with {len(trade_history)} trades...")
             
-            # Extract features from recent trades for ML
-            for trade in trade_history[-50:]:  # Use last 50 trades
+            for trade in trade_history[-50:]:
                 if 'confidence' not in trade:
                     continue
                     
@@ -441,20 +417,16 @@ def initialize_training_system():
                 ]
                 ml_features.append(features)
                 
-                # Determine optimal TP/SL based on trade result
                 profit = trade.get('profit_pips', 0)
                 result = trade.get('result', '')
                 
                 if result in ['SUCCESS', 'WIN']:
-                    # Successful trade - keep similar distances
                     optimal_tp = trade.get('tp_distance_pips', 8)
                     optimal_sl = trade.get('sl_distance_pips', 5)
                 elif result in ['FAILED', 'LOSE']:
-                    # Failed trade - adjust distances
-                    optimal_tp = trade.get('tp_distance_pips', 8) * 0.8  # Reduce TP
-                    optimal_sl = trade.get('sl_distance_pips', 5) * 1.2  # Increase SL
+                    optimal_tp = trade.get('tp_distance_pips', 8) * 0.8
+                    optimal_sl = trade.get('sl_distance_pips', 5) * 1.2
                 else:
-                    # Other results - moderate adjustment
                     optimal_tp = trade.get('tp_distance_pips', 8) * 0.9
                     optimal_sl = trade.get('sl_distance_pips', 5) * 1.1
                 
@@ -486,13 +458,9 @@ def train_ml_models():
         y_tp = np.array(tp_labels)
         y_sl = np.array(sl_labels)
         
-        # Scale features
         X_scaled = ml_scaler.fit_transform(X)
         
-        # Train TP model
         tp_model.fit(X_scaled, y_tp)
-        
-        # Train SL model
         sl_model.fit(X_scaled, y_sl)
         
         ml_trained = True
@@ -513,25 +481,17 @@ def extract_ml_features(df, current_price):
     
     features = []
     
-    # Price momentum
     features.append(latest.get('returns_1', 0))
     features.append(latest.get('returns_5', 0))
     features.append(latest.get('returns_10', 0))
     
-    # RSI value
     features.append(latest.get('rsi', 50))
-    
-    # MACD histogram
     features.append(latest.get('macd_hist', 0))
-    
-    # Bollinger Bands position
     features.append(latest.get('bb_percent', 50))
     
-    # Volatility
     atr_value = latest.get('atr', 0.0005)
     features.append(atr_value * 10000)
     
-    # Market condition flags
     features.append(latest.get('overbought', 0))
     features.append(latest.get('oversold', 0))
     
@@ -540,7 +500,6 @@ def extract_ml_features(df, current_price):
 def predict_optimal_levels(features, direction, current_price, df):
     """Predict optimal TP and SL levels"""
     
-    # Base levels for 2-minute trades
     if direction == "BULLISH":
         base_tp = current_price + 0.0008
         base_sl = current_price - 0.0005
@@ -551,20 +510,16 @@ def predict_optimal_levels(features, direction, current_price, df):
         base_tp = current_price
         base_sl = current_price
     
-    # Use ML predictions if available
     if ml_trained and features is not None:
         try:
             X_scaled = ml_scaler.transform([features])
             
-            # Predict optimal TP distance
             tp_pips_pred = tp_model.predict(X_scaled)[0]
             tp_pips_pred = max(5, min(20, tp_pips_pred))
             
-            # Predict optimal SL distance
             sl_pips_pred = sl_model.predict(X_scaled)[0]
             sl_pips_pred = max(3, min(15, sl_pips_pred))
             
-            # Convert pips to price
             pip_value = 0.0001
             
             if direction == "BULLISH":
@@ -583,7 +538,6 @@ def predict_optimal_levels(features, direction, current_price, df):
         except Exception as e:
             logger.warning(f"ML prediction failed: {e}")
     
-    # Fallback to base levels
     tp_pips = int(abs(base_tp - current_price) * 10000)
     sl_pips = int(abs(base_sl - current_price) * 10000)
     
@@ -599,12 +553,10 @@ def analyze_2min_prediction(df, current_price):
     try:
         latest = df.iloc[-1]
         
-        # Initialize scores
         bull_score = 0
         bear_score = 0
         confidence_factors = []
         
-        # 1. RSI ANALYSIS
         rsi_value = latest.get('rsi', 50)
         if rsi_value < 35:
             bull_score += 4
@@ -613,7 +565,6 @@ def analyze_2min_prediction(df, current_price):
             bear_score += 4
             confidence_factors.append(1.5 if rsi_value > 75 else 1.2)
         
-        # 2. MACD HISTOGRAM
         macd_hist = latest.get('macd_hist', 0)
         if macd_hist > 0.00005:
             bull_score += 3
@@ -622,7 +573,6 @@ def analyze_2min_prediction(df, current_price):
             bear_score += 3
             confidence_factors.append(1.3)
         
-        # 3. BOLLINGER BANDS
         bb_percent = latest.get('bb_percent', 50)
         if bb_percent < 25:
             bull_score += 2
@@ -631,31 +581,26 @@ def analyze_2min_prediction(df, current_price):
             bear_score += 2
             confidence_factors.append(1.2)
         
-        # 4. PRICE MOMENTUM
         momentum = latest.get('momentum_20', 0)
         if momentum > 0.0003:
             bull_score += 2
         elif momentum < -0.0003:
             bear_score += 2
         
-        # Calculate probability
         total_score = bull_score + bear_score
         if total_score == 0:
             return 0.5, 50, 'NEUTRAL', 1
         
         probability = bull_score / total_score
         
-        # Calculate confidence
         if confidence_factors:
             base_confidence = np.mean(confidence_factors) * 25
         else:
             base_confidence = 50
         
-        # Signal clarity adjustment
         signal_clarity = abs(probability - 0.5) * 2
         confidence = min(95, base_confidence * (1 + signal_clarity))
         
-        # Determine direction
         if probability > 0.65:
             direction = 'BULLISH'
             signal_strength = 3
@@ -680,7 +625,7 @@ def analyze_2min_prediction(df, current_price):
         return 0.5, 50, 'ERROR', 1
 
 # ==================== TRADE EXECUTION ====================
-def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal_sl, tp_pips, sl_pips):
+def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal_sl, tp_pips, sl_pips, signal_strength):
     """Execute a trade at the beginning of the 2-minute cycle"""
     
     if direction == 'NEUTRAL' or confidence < MIN_CONFIDENCE:
@@ -688,17 +633,15 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
         trading_state['trade_status'] = 'NO_SIGNAL'
         return None
     
-    # Determine action
     if direction == 'BULLISH':
         action = 'BUY'
         action_reason = f"Strong 2-min BULLISH signal ({confidence:.1f}% confidence)"
-    else:  # BEARISH
+    else:
         action = 'SELL'
         action_reason = f"Strong 2-min BEARISH signal ({confidence:.1f}% confidence)"
     
     trade_id = len(trade_history) + 1
     
-    # Get current indicator values for ML features
     price_series = create_price_series(current_price, 120)
     df_indicators = calculate_advanced_indicators(price_series)
     latest = df_indicators.iloc[-1]
@@ -737,7 +680,6 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
     trading_state['trade_status'] = 'ACTIVE'
     trading_state['signal_strength'] = signal_strength
     
-    # Save to Google Sheets immediately
     save_result = save_trade_to_google_sheets(trade)
     
     logger.info(f"🔔 {action} ORDER EXECUTED")
@@ -747,7 +689,6 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
     logger.info(f"   Stop Loss: {optimal_sl:.5f} ({sl_pips} pips)")
     logger.info(f"   Confidence: {confidence:.1f}%")
     logger.info(f"   Google Sheets: {'Saved' if save_result.get('success') else 'Failed'}")
-    logger.info(f"   Goal: Hit TP ({tp_pips} pips) before SL ({sl_pips} pips) in {CYCLE_SECONDS} seconds")
     
     return trade
 
@@ -760,20 +701,17 @@ def monitor_active_trade(current_price):
     entry_time = datetime.fromisoformat(trade['timestamp'])
     trade_duration = (datetime.now() - entry_time).total_seconds()
     
-    # Calculate current P&L
     if trade['action'] == 'BUY':
         current_pips = (current_price - trade['entry_price']) * 10000
-    else:  # SELL
+    else:
         current_pips = (trade['entry_price'] - current_price) * 10000
     
     trade['profit_pips'] = float(current_pips)
     trade['duration_seconds'] = float(trade_duration)
     
-    # Update trade progress
     trading_state['trade_progress'] = (trade_duration / CYCLE_SECONDS) * 100
     trading_state['remaining_time'] = max(0, CYCLE_SECONDS - trade_duration)
     
-    # Check exit conditions
     exit_trade = False
     exit_reason = ""
     
@@ -782,24 +720,20 @@ def monitor_active_trade(current_price):
             exit_trade = True
             exit_reason = f"TP HIT! +{trade['tp_distance_pips']} pips profit"
             trade['result'] = 'SUCCESS'
-            
         elif current_price <= trade['optimal_sl']:
             exit_trade = True
             exit_reason = f"SL HIT! -{trade['sl_distance_pips']} pips loss"
             trade['result'] = 'FAILED'
-            
-    else:  # SELL
+    else:
         if current_price <= trade['optimal_tp']:
             exit_trade = True
             exit_reason = f"TP HIT! +{trade['tp_distance_pips']} pips profit"
             trade['result'] = 'SUCCESS'
-            
         elif current_price >= trade['optimal_sl']:
             exit_trade = True
             exit_reason = f"SL HIT! -{trade['sl_distance_pips']} pips loss"
             trade['result'] = 'FAILED'
     
-    # Time-based exit
     if not exit_trade and trade_duration >= CYCLE_SECONDS:
         exit_trade = True
         if current_pips > 0:
@@ -812,14 +746,12 @@ def monitor_active_trade(current_price):
             exit_reason = "TIME ENDED at breakeven"
             trade['result'] = 'BREAKEVEN'
     
-    # Close trade if exit condition met
     if exit_trade:
         trade['status'] = 'CLOSED'
         trade['exit_price'] = float(current_price)
         trade['exit_time'] = datetime.now().isoformat()
         trade['exit_reason'] = exit_reason
         
-        # Update trading statistics
         trading_state['total_trades'] += 1
         
         if trade['result'] in ['SUCCESS', 'PARTIAL_SUCCESS']:
@@ -833,25 +765,20 @@ def monitor_active_trade(current_price):
             trading_state['balance'] -= loss_amount
             logger.info(f"📉 TRADE FAILED: {exit_reason}")
         
-        # Update win rate
         if trading_state['total_trades'] > 0:
             trading_state['win_rate'] = (trading_state['profitable_trades'] / 
                                         trading_state['total_trades']) * 100
         
-        # Add to local history
         trade_history.append(trade.copy())
         
-        # Update trade in Google Sheets
         save_trade_to_google_sheets(trade)
         
-        # Clear current trade
+        add_trade_to_ml_training(trade)
+        
         trading_state['current_trade'] = None
         trading_state['trade_status'] = 'COMPLETED'
         trading_state['trade_progress'] = 0
         trading_state['remaining_time'] = CYCLE_SECONDS
-        
-        # Add to ML training data
-        add_trade_to_ml_training(trade)
         
         return trade
     
@@ -860,7 +787,6 @@ def monitor_active_trade(current_price):
 def add_trade_to_ml_training(trade):
     """Add completed trade to ML training data"""
     try:
-        # Extract features from trade
         features = [
             trade.get('confidence', 0) / 100,
             trade.get('bb_percent_at_entry', 50) / 100,
@@ -870,7 +796,6 @@ def add_trade_to_ml_training(trade):
             trade.get('signal_strength', 0) / 3
         ]
         
-        # Determine optimal TP/SL based on result
         profit = trade.get('profit_pips', 0)
         result = trade.get('result', '')
         
@@ -888,7 +813,6 @@ def add_trade_to_ml_training(trade):
         tp_labels.append(max(5, min(20, optimal_tp)))
         sl_labels.append(max(3, min(15, optimal_sl)))
         
-        # Retrain ML if we have enough samples
         if len(ml_features) >= 10 and len(ml_features) % 5 == 0:
             train_ml_models()
             logger.info(f"📚 ML retrained with {len(ml_features)} samples")
@@ -902,13 +826,11 @@ def create_trading_chart(prices, current_trade, next_cycle):
     try:
         df = pd.DataFrame(prices, columns=['close'])
         
-        # Add basic indicators for chart
         df['sma_5'] = ta.sma(df['close'], length=5)
         df['sma_10'] = ta.sma(df['close'], length=10)
         
         fig = go.Figure()
         
-        # Price line
         fig.add_trace(go.Scatter(
             x=list(range(len(prices))),
             y=df['close'],
@@ -918,7 +840,6 @@ def create_trading_chart(prices, current_trade, next_cycle):
             hovertemplate='Price: %{y:.5f}<extra></extra>'
         ))
         
-        # Add moving averages
         fig.add_trace(go.Scatter(
             x=list(range(len(prices))),
             y=df['sma_5'],
@@ -937,11 +858,9 @@ def create_trading_chart(prices, current_trade, next_cycle):
             opacity=0.7
         ))
         
-        # Add trade markers if active trade exists
         if current_trade:
             entry_idx = len(prices) - 20 if len(prices) > 20 else 0
             
-            # Entry point
             fig.add_trace(go.Scatter(
                 x=[entry_idx],
                 y=[current_trade['entry_price']],
@@ -956,7 +875,6 @@ def create_trading_chart(prices, current_trade, next_cycle):
                 textposition="top center"
             ))
             
-            # TP line
             fig.add_trace(go.Scatter(
                 x=[entry_idx, len(prices)-1],
                 y=[current_trade['optimal_tp'], current_trade['optimal_tp']],
@@ -966,7 +884,6 @@ def create_trading_chart(prices, current_trade, next_cycle):
                 opacity=0.8
             ))
             
-            # SL line
             fig.add_trace(go.Scatter(
                 x=[entry_idx, len(prices)-1],
                 y=[current_trade['optimal_sl'], current_trade['optimal_sl']],
@@ -976,7 +893,6 @@ def create_trading_chart(prices, current_trade, next_cycle):
                 opacity=0.8
             ))
         
-        # Update layout
         title = f'EUR/USD 2-Minute Trading - Next Cycle: {next_cycle}s'
         
         fig.update_layout(
@@ -1014,15 +930,13 @@ def trading_cycle():
     """Main 2-minute trading cycle with caching"""
     global trading_state, trading_active
     
-    cycle_count = 0
+    logger.info("🔄 Starting trading cycle...")
     
-    # Initialize Google Sheets
+    # Initialize systems
     initialize_google_sheets()
-    
-    # Initialize ML system
     initialize_training_system()
     
-    logger.info("✅ Trading bot started with 2-minute cycles")
+    cycle_count = 0
     
     while trading_active:
         try:
@@ -1038,10 +952,8 @@ def trading_cycle():
             logger.info(f"{'='*70}")
             
             # 1. GET MARKET DATA
-            logger.info("Fetching EUR/USD price...")
             current_price, data_source = get_cached_eurusd_price()
             
-            # Track price history
             price_history_deque.append({
                 'time': datetime.now().strftime('%H:%M:%S'),
                 'price': current_price
@@ -1049,8 +961,6 @@ def trading_cycle():
             
             trading_state['current_price'] = round(float(current_price), 5)
             trading_state['data_source'] = data_source
-            trading_state['is_demo_data'] = 'Simulation' in data_source or 'Cache' in data_source
-            trading_state['api_calls_today'] = '~240 (SAFE)'
             
             # 2. CREATE PRICE SERIES
             price_series = create_price_series(current_price, 120)
@@ -1059,7 +969,6 @@ def trading_cycle():
             df_indicators = calculate_advanced_indicators(price_series)
             
             # 4. MAKE 2-MINUTE PREDICTION
-            logger.info("Analyzing market for 2-minute prediction...")
             pred_prob, confidence, direction, signal_strength = analyze_2min_prediction(
                 df_indicators, current_price
             )
@@ -1088,12 +997,11 @@ def trading_cycle():
                 
                 execute_2min_trade(
                     direction, confidence, current_price, 
-                    optimal_tp, optimal_sl, tp_pips, sl_pips
+                    optimal_tp, optimal_sl, tp_pips, sl_pips, signal_strength
                 )
             elif trading_state['current_trade'] is None:
                 trading_state['action'] = 'WAIT'
                 trading_state['trade_status'] = 'NO_SIGNAL'
-                logger.info(f"⚠️  No trade signal: {direction} with {confidence:.1f}% confidence")
             
             # 9. CALCULATE NEXT CYCLE TIME
             cycle_duration = (datetime.now() - cycle_start).seconds
@@ -1109,29 +1017,21 @@ def trading_cycle():
             )
             trading_state['chart_data'] = chart_data
             
-            # 11. UPDATE PRICE HISTORY
             trading_state['price_history'] = list(price_history_deque)[-20:]
-            
-            # 12. UPDATE TIMESTAMP
             trading_state['last_update'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             trading_state['server_time'] = datetime.now().isoformat()
             
-            # 13. LOG CYCLE SUMMARY
             logger.info(f"CYCLE #{cycle_count} SUMMARY:")
             logger.info(f"  Price: {current_price:.5f} ({data_source})")
             logger.info(f"  Prediction: {direction} (Signal: {signal_strength}/3)")
             logger.info(f"  Action: {trading_state['action']} ({confidence:.1f}% confidence)")
             logger.info(f"  TP/SL: {tp_pips}/{sl_pips} pips")
             logger.info(f"  Balance: ${trading_state['balance']:.2f}")
-            logger.info(f"  Win Rate: {trading_state['win_rate']:.1f}%")
             logger.info(f"  ML Ready: {trading_state['ml_model_ready']}")
-            logger.info(f"  Google Sheets: {trading_state['google_sheets_status']}")
-            logger.info(f"  Cache Efficiency: {trading_state['cache_efficiency']}")
-            logger.info(f"  API Calls/Day: ~240 (SAFE)")
             logger.info(f"  Next cycle in: {next_cycle_time}s")
             logger.info(f"{'='*70}")
             
-            # 14. WAIT FOR NEXT CYCLE
+            # WAIT FOR NEXT CYCLE
             for i in range(next_cycle_time):
                 if not trading_active:
                     break
@@ -1140,7 +1040,6 @@ def trading_cycle():
                 trading_state['cycle_progress'] = progress_pct
                 trading_state['remaining_time'] = next_cycle_time - i
                 
-                # Update active trade progress if exists
                 if trading_state['current_trade']:
                     entry_time = datetime.fromisoformat(trading_state['current_trade']['timestamp'])
                     trade_duration = (datetime.now() - entry_time).total_seconds()
@@ -1160,20 +1059,17 @@ def start_trading_bot():
     global trading_thread, trading_active
     
     try:
+        if trading_thread and trading_thread.is_alive():
+            logger.info("Trading bot already running")
+            return True
+            
         trading_active = True
         trading_thread = threading.Thread(target=trading_cycle, daemon=True)
         trading_thread.start()
         logger.info("✅ Trading bot started successfully")
-        print("✅ 2-Minute trading system ACTIVE")
-        print(f"✅ Caching: {CACHE_DURATION}-second cache enabled")
-        print(f"✅ Google Sheets: Connected")
-        print("✅ API Calls/Day: ~240 (SAFE for all free limits)")
-        print("✅ Auto-Trading: ENABLED")
-        print("✅ ML Training: Ready after 10 trades")
         return True
     except Exception as e:
         logger.error(f"❌ Error starting trading bot: {e}")
-        print(f"❌ Error: {e}")
         return False
 
 def stop_trading_bot():
@@ -1195,7 +1091,6 @@ def get_trading_state():
     try:
         state_copy = trading_state.copy()
         
-        # Make current trade serializable
         if state_copy['current_trade']:
             trade = state_copy['current_trade'].copy()
             for key in trade:
@@ -1214,7 +1109,6 @@ def get_trade_history():
     try:
         sheet_trades = get_trades_from_google_sheets()
         
-        # Format for display
         display_trades = []
         for trade in sheet_trades[-10:]:
             trade_copy = {}
@@ -1223,7 +1117,6 @@ def get_trade_history():
                        'confidence', 'signal_strength', 'sl_distance_pips', 'tp_distance_pips']:
                 trade_copy[key] = trade.get(key, '')
             
-            # Format numbers
             for num_key in ['entry_price', 'exit_price', 'profit_pips', 'confidence']:
                 if trade_copy.get(num_key) is not None:
                     try:
@@ -1261,7 +1154,6 @@ def reset_trading():
         'cycle_progress': 0
     })
     
-    # Clear local memory but keep Google Sheets data
     trade_history.clear()
     ml_features.clear()
     tp_labels.clear()
@@ -1279,14 +1171,10 @@ def health_check():
         'timestamp': datetime.now().isoformat(),
         'cycle_count': trading_state['cycle_count'],
         'system_status': 'ACTIVE',
-        'cycle_duration': CYCLE_SECONDS,
-        'cache_enabled': True,
-        'cache_duration': CACHE_DURATION,
-        'google_sheets_status': trading_state['google_sheets_status'],
         'trading_active': trading_active,
+        'google_sheets_status': trading_state['google_sheets_status'],
         'ml_ready': trading_state['ml_model_ready'],
         'total_trades': trading_state['total_trades'],
-        'api_calls_per_day': '~240 (SAFE)',
         'version': '2.0-google-sheets'
     })
 
@@ -1302,10 +1190,26 @@ def api_stop_trading():
     result = stop_trading_bot()
     return jsonify({'success': result, 'message': 'Trading stopped'})
 
+# ==================== INITIALIZE AND START ====================
+def initialize_system():
+    """Initialize the trading system"""
+    logger.info("Initializing trading system...")
+    
+    # Initialize Google Sheets first
+    initialize_google_sheets()
+    
+    # Initialize ML training
+    initialize_training_system()
+    
+    # Start trading bot
+    start_trading_bot()
+    
+    logger.info("✅ Trading system initialized and started")
+
 # ==================== MAIN ENTRY POINT ====================
 if __name__ == '__main__':
-    # ⭐⭐ CRITICAL: Start trading bot when app starts ⭐⭐
-    start_trading_bot()
+    # Initialize and start the system
+    initialize_system()
     
     # Run Flask app
     port = int(os.environ.get('PORT', 5000))
