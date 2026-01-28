@@ -20,7 +20,7 @@
                         <p class="text-light mb-0">
                             <i class="bi bi-clock"></i> Predictions every 120 seconds • 
                             <i class="bi bi-cpu"></i> ML-Optimized TP/SL • 
-                            <i class="bi bi-google"></i> Google Sheets Storage • 
+                            <i class="bi bi-git"></i> Git Repository Storage •
                             <i class="bi bi-cash-coin"></i> Real-time Virtual Trading
                         </p>
                     </div>
@@ -82,9 +82,11 @@
                             </div>
                         </div>
                         <div class="row text-start mt-2">
-                            <div class="col-6">Signal Strength:</div>
+                            <div class="col-6">Data Storage:</div>
                             <div class="col-6 text-end">
-                                <span id="signalStrength" class="badge bg-warning">0/3</span>
+                                <span id="dataStorage" class="badge bg-info">
+                                    <i class="bi bi-git"></i> Git Repository
+                                </span>
                             </div>
                         </div>
                         <div class="row text-start mt-2">
@@ -147,14 +149,18 @@
                             </div>
                         </div>
                         <div class="row mb-2">
-                            <div class="col-6">Storage:</div>
-                            <div class="col-6 text-end">
-                                <span id="storageStatus" class="badge bg-success">Google Sheets</span>
-                            </div>
+                            <div class="col-6">Cycle Duration:</div>
+                            <div class="col-6 text-end fw-bold">120s</div>
                         </div>
                         <div class="row mb-2">
                             <div class="col-6">Remaining Time:</div>
                             <div class="col-6 text-end" id="remainingTime">120s</div>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-6">Signal Strength:</div>
+                            <div class="col-6 text-end">
+                                <span id="signalStrength" class="badge bg-warning">0/3</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -195,6 +201,20 @@
                             <i class="bi bi-hourglass-split display-4 d-block mb-3"></i>
                             <span class="fs-5">No active trade</span>
                             <p class="small mt-2">Waiting for next trading signal...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Git Storage Info -->
+                <div class="card trading-card mb-3">
+                    <div class="card-header bg-dark">
+                        <h5 class="mb-0"><i class="bi bi-git"></i> Git Repository Storage</h5>
+                    </div>
+                    <div class="card-body" id="storageInfo">
+                        <div class="text-center text-muted py-3">
+                            <i class="bi bi-database display-6 d-block mb-2"></i>
+                            <span>Data stored in Git repository</span>
+                            <p class="small mt-2">No API limits • Survives redeploys</p>
                         </div>
                     </div>
                 </div>
@@ -241,11 +261,20 @@
                         <div class="row mt-3">
                             <div class="col-12">
                                 <div class="d-grid gap-2">
-                                    <button id="resetBtn" class="btn btn-warning">
-                                        <i class="bi bi-arrow-clockwise"></i> Reset Trading
+                                    <button id="viewStorageBtn" class="btn btn-dark">
+                                        <i class="bi bi-github"></i> View Git Repository
                                     </button>
-                                    <button id="refreshBtn" class="btn btn-info">
-                                        <i class="bi bi-arrow-repeat"></i> Refresh Now
+                                    <div class="d-flex gap-2">
+                                        <button id="resetBtn" class="btn btn-warning flex-fill">
+                                            <i class="bi bi-arrow-clockwise"></i> Reset Trading
+                                        </button>
+                                        <button id="refreshBtn" class="btn btn-info flex-fill">
+                                            <i class="bi bi-arrow-repeat"></i> Refresh Now
+                                        </button>
+                                    </div>
+                                    <button id="toggleRefresh" class="btn btn-outline-light">
+                                        <i class="bi bi-play-circle"></i> Auto-Refresh: 
+                                        <span id="autoRefreshStatus" class="badge bg-info">Enabled</span>
                                     </button>
                                 </div>
                             </div>
@@ -261,11 +290,17 @@
                 <div class="card trading-card">
                     <div class="card-header">
                         <div class="d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="bi bi-clock-history"></i> Trade History (Google Sheets)</h5>
+                            <h5 class="mb-0"><i class="bi bi-clock-history"></i> Trade History</h5>
                             <div>
                                 <span class="badge bg-dark me-2">Total: <span id="totalHistoryTrades">0</span></span>
                                 <span class="badge bg-success">Wins: <span id="totalWins">0</span></span>
+                                <span id="gitRepoLink" class="badge bg-dark ms-2">
+                                    <i class="bi bi-git"></i> Git Storage
+                                </span>
                             </div>
+                        </div>
+                        <div id="gitRepoInfo" class="small mt-2">
+                            <!-- Git repo info will be populated here -->
                         </div>
                     </div>
                     <div class="card-body p-0">
@@ -283,18 +318,28 @@
                                         <th>Duration</th>
                                         <th>Result</th>
                                         <th>Confidence</th>
+                                        <th>Signal</th>
                                     </tr>
                                 </thead>
                                 <tbody id="tradeHistory">
                                     <tr>
-                                        <td colspan="10" class="text-center py-4">
+                                        <td colspan="11" class="text-center py-4">
                                             <i class="bi bi-inbox display-6 d-block text-muted mb-2"></i>
-                                            <span class="text-muted">Loading from Google Sheets...</span>
+                                            <span class="text-muted">No trades yet</span>
+                                            <div class="small text-info mt-2">
+                                                <i class="bi bi-git"></i> All trades stored in Git repository
+                                            </div>
                                         </td>
                                     </tr>
                                 </tbody>
                             </table>
                         </div>
+                    </div>
+                    <div class="card-footer text-muted text-center">
+                        <small>
+                            Showing last 10 trades • Complete history saved to <code>data/trades.json</code> • 
+                            120-second cycles • Git Repository: <code>https://github.com/gicheha-ai/m.git</code>
+                        </small>
                     </div>
                 </div>
             </div>
@@ -307,10 +352,10 @@
                     <small>
                         <i class="bi bi-c-circle"></i> 2024 EUR/USD 2-Minute Auto-Learning Trading System • 
                         <span id="systemStatus" class="badge bg-success">System Active</span> • 
-                        Storage: <span id="storageIndicator" class="badge bg-success">Google Sheets</span> • 
-                        Auto-refresh: <span id="autoRefreshStatus" class="badge bg-info">Enabled</span> • 
+                        Auto-refresh: <span id="autoRefreshToggle" class="badge bg-info">Enabled</span> • 
                         Cycle: <span class="badge bg-primary">120s</span> • 
-                        Version 2.0
+                        Storage: <span class="badge bg-dark"><i class="bi bi-git"></i> Git Repository</span> • 
+                        Version 2.0-Git-Storage
                     </small>
                 </div>
             </div>
@@ -326,7 +371,7 @@
     <script>
         // Initialize when page loads
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('EUR/USD 2-Minute Trading System initialized');
+            console.log('EUR/USD 2-Minute Trading System with Git Storage initialized');
             
             // Set up auto-refresh
             startAutoRefresh();
@@ -337,7 +382,106 @@
             // Initial data fetch
             fetchTradingState();
             fetchTradeHistory();
+            fetchStorageStatus();
         });
+        
+        // Setup event listeners
+        function setupEventListeners() {
+            // Auto-refresh toggle
+            const autoRefreshToggle = document.getElementById('autoRefreshToggle');
+            if (autoRefreshToggle) {
+                autoRefreshToggle.addEventListener('click', function() {
+                    toggleAutoRefresh();
+                });
+            }
+            
+            // View Git storage button
+            const viewStorageBtn = document.getElementById('viewStorageBtn');
+            if (viewStorageBtn) {
+                viewStorageBtn.addEventListener('click', function() {
+                    window.open('https://github.com/gicheha-ai/m/tree/main/data', '_blank');
+                    showToast('Opening Git repository...', 'info');
+                });
+            }
+            
+            // Refresh button
+            const refreshBtn = document.getElementById('refreshBtn');
+            if (refreshBtn) {
+                refreshBtn.addEventListener('click', function() {
+                    fetchTradingState();
+                    fetchTradeHistory();
+                    fetchStorageStatus();
+                    showToast('Data refreshed from Git storage', 'info');
+                });
+            }
+            
+            // Reset button
+            const resetBtn = document.getElementById('resetBtn');
+            if (resetBtn) {
+                resetBtn.addEventListener('click', function() {
+                    if (confirm('Are you sure you want to reset all trading statistics? This will clear trade history and reset balance to $10,000.')) {
+                        resetTrading();
+                    }
+                });
+            }
+            
+            // Toggle chart button
+            const toggleChartBtn = document.getElementById('toggleChart');
+            if (toggleChartBtn) {
+                toggleChartBtn.addEventListener('click', function() {
+                    // Chart fullscreen handled by charts.js
+                });
+            }
+        }
+        
+        // Start auto-refresh
+        function startAutoRefresh() {
+            if (typeof window.startAutoRefresh === 'function') {
+                window.startAutoRefresh();
+            }
+        }
+        
+        // Toggle auto-refresh
+        function toggleAutoRefresh() {
+            if (typeof window.toggleAutoRefresh === 'function') {
+                window.toggleAutoRefresh();
+            }
+        }
+        
+        // Fetch trading state
+        function fetchTradingState() {
+            if (typeof window.fetchTradingState === 'function') {
+                window.fetchTradingState();
+            }
+        }
+        
+        // Fetch trade history
+        function fetchTradeHistory() {
+            if (typeof window.fetchTradeHistory === 'function') {
+                window.fetchTradeHistory();
+            }
+        }
+        
+        // Fetch storage status
+        function fetchStorageStatus() {
+            if (typeof window.fetchStorageStatus === 'function') {
+                window.fetchStorageStatus();
+            }
+        }
+        
+        // Reset trading
+        function resetTrading() {
+            if (typeof window.resetTrading === 'function') {
+                window.resetTrading();
+            }
+        }
+        
+        // Show toast
+        function showToast(message, type) {
+            if (typeof window.showToast === 'function') {
+                window.showToast(message, type);
+            }
+        }
     </script>
 </body>
 </html>

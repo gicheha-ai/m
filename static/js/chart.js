@@ -1,6 +1,6 @@
 /**
  * EUR/USD Trading System - Chart Management Module
- * Fixed for 2-Minute Cycles
+ * Fixed for 2-Minute Cycles with Git Storage Indicator
  */
 
 let currentChart = null;
@@ -11,7 +11,7 @@ const CHART_POINTS = 120; // ⭐ FIXED: 120 points for 2 minutes
 
 // Initialize chart system
 function initializeChartSystem() {
-    console.log('Chart system initialized (2-Minute Cycles)');
+    console.log('Chart system initialized (2-Minute Cycles with Git Storage)');
     
     // Create initial empty chart
     createInitialChart();
@@ -35,7 +35,7 @@ function createInitialChart() {
         displaylogo: false
     });
     
-    console.log('Initial chart created (120-point view)');
+    console.log('Initial chart created (120-point view with Git storage)');
 }
 
 // Get chart layout configuration
@@ -99,7 +99,7 @@ function getEmptyTrace() {
 }
 
 // Update chart with new data
-function updateChart(priceData, indicators = {}, tradeInfo = null) {
+function updateChart(priceData, indicators = {}, tradeInfo = null, tradingState = null) {
     if (!currentChart) return;
     
     try {
@@ -108,15 +108,18 @@ function updateChart(priceData, indicators = {}, tradeInfo = null) {
         let displayPrices;
         
         if (priceData && priceData.length > 0) {
+            // If we have data, use it (pad if necessary)
             if (priceData.length >= CHART_POINTS) {
                 displayPrices = priceData.slice(-CHART_POINTS);
             } else {
+                // Pad with first value
                 displayPrices = [
                     ...Array(CHART_POINTS - priceData.length).fill(priceData[0]),
                     ...priceData
                 ];
             }
         } else {
+            // No data, use empty array
             displayPrices = Array(CHART_POINTS).fill(1.08500);
         }
         
@@ -131,8 +134,16 @@ function updateChart(priceData, indicators = {}, tradeInfo = null) {
             hovertemplate: 'Price: %{y:.5f}<extra></extra>'
         }];
         
+        // Update chart layout with additional info
+        const layout = getChartLayout();
+        
+        // ⭐ NEW: Add Git storage info to chart title if trading state is available
+        if (tradingState) {
+            updateChartTitleWithGitInfo(tradingState, layout);
+        }
+        
         // Update chart
-        Plotly.react('chart', traces, getChartLayout());
+        Plotly.react('chart', traces, layout);
         
         // Add trade markers if trade exists
         if (tradeInfo) {
@@ -140,8 +151,7 @@ function updateChart(priceData, indicators = {}, tradeInfo = null) {
         }
         
         // Update chart status
-        document.getElementById('chartStatus').textContent = 'Live';
-        document.getElementById('chartStatus').className = 'badge bg-success';
+        updateChartStatus(tradingState);
         
         // Store data
         priceChartData = displayPrices;
@@ -151,31 +161,82 @@ function updateChart(priceData, indicators = {}, tradeInfo = null) {
     }
 }
 
-// Update chart from trading state data
-function updateChartFromState(tradingState) {
-    if (!tradingState || !tradingState.chart_data) {
-        // Create simple chart from price data
-        if (tradingState && tradingState.current_price) {
-            const price = tradingState.current_price;
-            const priceData = Array.from({length: CHART_POINTS}, (_, i) => {
-                const noise = (Math.random() - 0.5) * 0.0002;
-                return price + noise * (i / CHART_POINTS);
-            });
-            updateChart(priceData, {}, tradingState.current_trade);
-        }
+// ⭐ NEW: Update chart title with Git storage info
+function updateChartTitleWithGitInfo(tradingState, layout) {
+    if (!tradingState) return layout;
+    
+    const dataSource = tradingState.data_source || '';
+    const dataStorage = tradingState.data_storage || 'GIT_REPO';
+    const gitRepo = tradingState.git_repo_url || 'https://github.com/gicheha-ai/m.git';
+    
+    let titleSuffix = '';
+    
+    if (dataStorage.includes('GIT') && dataStorage.includes('READY')) {
+        titleSuffix = ' • 💾 Git Storage Active';
+    } else if (dataStorage.includes('GIT')) {
+        titleSuffix = ' • ⚠️ Git Storage';
+    }
+    
+    if (dataSource.includes('Cache')) {
+        titleSuffix += ' • 📦 Cached Data';
+    }
+    
+    layout.title.text = `EUR/USD Live Price Chart (2-Minute View)${titleSuffix}`;
+    
+    return layout;
+}
+
+// ⭐ NEW: Update chart status with storage info
+function updateChartStatus(tradingState) {
+    const chartStatus = document.getElementById('chartStatus');
+    if (!chartStatus) return;
+    
+    if (!tradingState) {
+        chartStatus.textContent = 'Live';
+        chartStatus.className = 'badge bg-success';
         return;
     }
     
-    try {
-        const chartData = JSON.parse(tradingState.chart_data);
-        Plotly.react('chart', chartData.data, chartData.layout);
-        
-        // Update chart status
-        document.getElementById('chartStatus').textContent = 'Live';
-        document.getElementById('chartStatus').className = 'badge bg-success';
-        
-    } catch (error) {
-        console.log('Using dynamic chart update');
+    const dataStorage = tradingState.data_storage || 'GIT_REPO';
+    
+    if (dataStorage.includes('READY')) {
+        chartStatus.textContent = 'Live • Git Storage';
+        chartStatus.className = 'badge bg-success';
+    } else if (dataStorage.includes('GIT')) {
+        chartStatus.textContent = 'Live • Git Connected';
+        chartStatus.className = 'badge bg-warning';
+    } else {
+        chartStatus.textContent = 'Live';
+        chartStatus.className = 'badge bg-success';
+    }
+}
+
+// Update chart from trading state data
+function updateChartFromState(tradingState) {
+    if (!tradingState) {
+        // Create simple chart
+        const priceData = generatePriceSeries(1.0850, CHART_POINTS);
+        updateChart(priceData, {}, null, tradingState);
+        return;
+    }
+    
+    if (tradingState.chart_data) {
+        try {
+            const chartData = JSON.parse(tradingState.chart_data);
+            
+            // ⭐ MODIFIED: Add Git info to chart title
+            const layout = chartData.layout || getChartLayout();
+            updateChartTitleWithGitInfo(tradingState, layout);
+            
+            Plotly.react('chart', chartData.data, layout);
+            
+            updateChartStatus(tradingState);
+            
+        } catch (error) {
+            console.log('Using dynamic chart update');
+            updateChartDynamic(tradingState);
+        }
+    } else {
         updateChartDynamic(tradingState);
     }
 }
@@ -188,8 +249,8 @@ function updateChartDynamic(tradingState) {
     const basePrice = tradingState.current_price || 1.0850;
     const priceSeries = generatePriceSeries(basePrice, CHART_POINTS);
     
-    // Update chart
-    updateChart(priceSeries, {}, tradingState.current_trade);
+    // Update chart with Git info
+    updateChart(priceSeries, {}, tradingState.current_trade, tradingState);
 }
 
 // Generate simulated price series
@@ -198,9 +259,11 @@ function generatePriceSeries(basePrice, length = CHART_POINTS) {
     let currentPrice = basePrice;
     
     for (let i = 1; i < length; i++) {
+        // Simulate random walk
         const change = (Math.random() - 0.5) * 0.00015;
         currentPrice += change;
         
+        // Keep in reasonable range
         if (currentPrice < 1.0800) currentPrice = 1.0800 + Math.abs(change);
         if (currentPrice > 1.0900) currentPrice = 1.0900 - Math.abs(change);
         
@@ -240,6 +303,23 @@ function addTradeToChart(trade, timePoints, priceData) {
             borderpad: 4,
             font: { color: '#ffffff', size: 12 }
         });
+        
+        // ⭐ NEW: Add Git storage indicator for stored trades
+        if (trade.data_stored_in && trade.data_stored_in.includes('git')) {
+            layout.annotations.push({
+                x: entryIdx + 5,
+                y: trade.entry_price,
+                xref: 'x',
+                yref: 'y',
+                text: '💾 Git Stored',
+                showarrow: false,
+                bgcolor: 'rgba(0, 0, 0, 0.8)',
+                bordercolor: '#6f42c1',
+                borderwidth: 1,
+                borderpad: 4,
+                font: { color: '#ffffff', size: 10 }
+            });
+        }
         
         // Add TP line
         if (trade.optimal_tp) {
@@ -335,7 +415,7 @@ function startChartUpdates() {
         }
     }, 10000); // Check every 10 seconds
     
-    console.log('Chart updates started');
+    console.log('Chart updates started (Git Storage)');
 }
 
 // Stop chart updates
@@ -363,10 +443,35 @@ function handleFullscreenChange() {
     
     if (isFullscreen) {
         toggleBtn.innerHTML = '<i class="bi bi-arrows-angle-contract"></i>';
+        // Resize chart for fullscreen
         setTimeout(() => Plotly.Plots.resize(chartDiv), 100);
     } else {
         toggleBtn.innerHTML = '<i class="bi bi-arrows-angle-expand"></i>';
+        // Resize chart back
         setTimeout(() => Plotly.Plots.resize(chartDiv), 100);
+    }
+}
+
+// ⭐ NEW: Update price history display
+function updatePriceHistory(historyData) {
+    if (!historyData || !Array.isArray(historyData) || historyData.length === 0) return;
+    
+    try {
+        // Take last 20 price points
+        const recentHistory = historyData.slice(-20);
+        
+        // Create a simple price history chart if needed
+        // This is optional - just for visual reference
+        if (recentHistory.length > 1) {
+            const prices = recentHistory.map(item => item.price || 1.0850);
+            const times = recentHistory.map((item, index) => index);
+            
+            // Could add a small indicator on the main chart
+            // For now, we just log it
+            console.log(`Price history: ${recentHistory.length} points, latest: ${prices[prices.length-1]}`);
+        }
+    } catch (error) {
+        console.error('Error updating price history:', error);
     }
 }
 
@@ -384,5 +489,6 @@ window.updateChartFromState = updateChartFromState;
 window.updateChart = updateChart;
 window.startChartUpdates = startChartUpdates;
 window.stopChartUpdates = stopChartUpdates;
+window.updatePriceHistory = updatePriceHistory;
 
-console.log('Charts.js loaded successfully (2-Minute Cycle)');
+console.log('Charts.js loaded successfully (2-Minute Cycle with Git Storage)');

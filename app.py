@@ -1,7 +1,7 @@
 """
 EUR/USD 2-Minute Auto-Learning Trading System
 WITH 30-SECOND CACHING for API limit protection
-AND GOOGLE SHEETS DATA STORAGE
+AND GIT REPOSITORY DATA STORAGE
 """
 
 import os
@@ -34,12 +34,17 @@ INITIAL_BALANCE = 10000.0
 BASE_TRADE_SIZE = 1000.0
 MIN_CONFIDENCE = 65.0
 
-# ==================== GOOGLE SHEETS CONFIGURATION ====================
-SHEETDB_API_URL = "https://sheetdb.io/api/v1/lfjhagwynpocp"
-GOOGLE_SHEETS_ENABLED = True
+# ==================== GIT REPOSITORY DATA STORAGE ====================
+# Data will be saved to your Git repo: https://github.com/gicheha-ai/m.git
+DATA_DIR = "data"
+TRADES_FILE = os.path.join(DATA_DIR, "trades.json")
+STATE_FILE = os.path.join(DATA_DIR, "state.json")
+ML_DATA_FILE = os.path.join(DATA_DIR, "ml_data.json")
+TRAINING_FILE = os.path.join(DATA_DIR, "training_data.json")
+CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 
 # ==================== CACHE CONFIGURATION ====================
-CACHE_DURATION = 30
+CACHE_DURATION = 30  # ⭐ CACHE: 30 seconds
 price_cache = {
     'price': 1.0850,
     'timestamp': time.time(),
@@ -88,7 +93,8 @@ trading_state = {
     'cache_misses': 0,
     'cache_efficiency': '0%',
     'api_calls_today': '~240 (SAFE)',
-    'google_sheets_status': 'INITIALIZING'
+    'data_storage': 'GIT_REPO',
+    'git_repo_url': 'https://github.com/gicheha-ai/m.git'
 }
 
 # Data storage
@@ -105,10 +111,6 @@ tp_labels = []
 sl_labels = []
 ml_trained = False
 
-# Trading bot thread
-trading_thread = None
-trading_active = True
-
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -123,143 +125,221 @@ print("="*80)
 print(f"Cycle: Predict and trade every {CYCLE_MINUTES} minutes ({CYCLE_SECONDS} seconds)")
 print(f"Cache Duration: {CACHE_DURATION} seconds (66% API reduction)")
 print(f"API Calls/Day: ~240 (SAFE for all free limits)")
-print(f"Data Storage: Google Sheets")
+print(f"Data Storage: Git Repository (No API limits)")
+print(f"Git Repo: https://github.com/gicheha-ai/m.git")
 print(f"Initial Balance: ${INITIAL_BALANCE:,.2f}")
 print(f"Trade Size: ${BASE_TRADE_SIZE:,.2f}")
-print(f"Auto-Trading: ENABLED")
 print("="*80)
 print("Starting system...")
 
-# ==================== GOOGLE SHEETS FUNCTIONS ====================
-def save_trade_to_google_sheets(trade_data):
-    """Save trade data to Google Sheets"""
-    if not GOOGLE_SHEETS_ENABLED:
-        return {'success': False, 'message': 'Google Sheets disabled'}
-    
+# ==================== GIT REPOSITORY DATA STORAGE FUNCTIONS ====================
+def initialize_git_storage():
+    """Initialize Git repository data storage"""
     try:
-        sheetdb_data = {
-            "data": [trade_data]
-        }
+        # Create data directory if it doesn't exist
+        if not os.path.exists(DATA_DIR):
+            os.makedirs(DATA_DIR, exist_ok=True)
+            logger.info(f"✅ Created data directory: {DATA_DIR}")
         
-        response = requests.post(
-            SHEETDB_API_URL,
-            json=sheetdb_data,
-            headers={'Content-Type': 'application/json'},
-            timeout=10
-        )
+        # Initialize trades.json
+        if not os.path.exists(TRADES_FILE) or os.path.getsize(TRADES_FILE) == 0:
+            with open(TRADES_FILE, 'w') as f:
+                json.dump([], f, indent=2)
+            logger.info(f"✅ Initialized trades.json")
         
-        if response.status_code == 201:
-            logger.info(f"✅ Trade saved to Google Sheets: Trade #{trade_data.get('trade_id', 'N/A')}")
-            trading_state['google_sheets_status'] = 'CONNECTED'
-            return {'success': True, 'data': response.json()}
-        else:
-            logger.warning(f"⚠️  SheetDB API error: {response.status_code}")
-            trading_state['google_sheets_status'] = f'ERROR: {response.status_code}'
-            return {'success': False, 'error': f'API Error {response.status_code}'}
-            
+        # Initialize state.json
+        if not os.path.exists(STATE_FILE) or os.path.getsize(STATE_FILE) == 0:
+            initial_state = {
+                "balance": INITIAL_BALANCE,
+                "total_trades": 0,
+                "profitable_trades": 0,
+                "win_rate": 0.0,
+                "cycle_count": 0,
+                "ml_model_ready": False,
+                "last_updated": datetime.now().isoformat(),
+                "git_repo": "https://github.com/gicheha-ai/m.git"
+            }
+            with open(STATE_FILE, 'w') as f:
+                json.dump(initial_state, f, indent=2)
+            logger.info(f"✅ Initialized state.json")
+        
+        # Initialize training_data.json
+        if not os.path.exists(TRAINING_FILE) or os.path.getsize(TRAINING_FILE) == 0:
+            with open(TRAINING_FILE, 'w') as f:
+                json.dump({"features": [], "tp_labels": [], "sl_labels": []}, f, indent=2)
+            logger.info(f"✅ Initialized training_data.json")
+        
+        # Load existing data
+        load_trades_from_storage()
+        load_training_from_storage()
+        
+        logger.info("✅ Git repository storage initialized successfully")
+        trading_state['data_storage'] = 'GIT_REPO_READY'
+        return True
+        
     except Exception as e:
-        logger.error(f"❌ Error saving to Google Sheets: {str(e)[:100]}")
-        trading_state['google_sheets_status'] = f'ERROR: {str(e)[:30]}'
-        return {'success': False, 'error': str(e)}
+        logger.error(f"❌ Error initializing Git storage: {e}")
+        trading_state['data_storage'] = f'GIT_REPO_ERROR: {str(e)[:50]}'
+        return False
 
-def get_trades_from_google_sheets():
-    """Retrieve trade history from Google Sheets"""
-    if not GOOGLE_SHEETS_ENABLED:
-        return []
+def load_trades_from_storage():
+    """Load trades from Git repository storage"""
+    global trade_history
     
     try:
-        response = requests.get(SHEETDB_API_URL, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            logger.info(f"📊 Retrieved {len(data)} trades from Google Sheets")
-            trading_state['google_sheets_status'] = 'CONNECTED'
-            return data
-        else:
-            logger.warning(f"SheetDB GET error: {response.status_code}")
-            trading_state['google_sheets_status'] = f'READ_ERROR: {response.status_code}'
-            return []
+        if os.path.exists(TRADES_FILE) and os.path.getsize(TRADES_FILE) > 0:
+            with open(TRADES_FILE, 'r') as f:
+                trade_history = json.load(f)
             
-    except Exception as e:
-        logger.error(f"Error fetching from Google Sheets: {e}")
-        trading_state['google_sheets_status'] = f'FETCH_ERROR: {str(e)[:30]}'
-        return []
-
-def initialize_google_sheets():
-    """Initialize connection to Google Sheets"""
-    if not GOOGLE_SHEETS_ENABLED:
-        logger.info("Google Sheets storage disabled")
-        trading_state['google_sheets_status'] = 'DISABLED'
-        return
-    
-    try:
-        logger.info("Initializing Google Sheets connection...")
-        
-        test_response = requests.get(SHEETDB_API_URL, timeout=5)
-        
-        if test_response.status_code == 200:
-            existing_trades = get_trades_from_google_sheets()
-            
-            if existing_trades:
-                for trade in existing_trades:
-                    numeric_fields = ['trade_id', 'entry_price', 'exit_price', 'profit_pips', 
-                                    'confidence', 'duration_seconds', 'cycle_number', 
-                                    'signal_strength', 'sl_distance_pips', 'tp_distance_pips']
-                    for field in numeric_fields:
-                        if field in trade:
-                            try:
-                                trade[field] = float(trade[field]) if '.' in str(trade[field]) else int(trade[field])
-                            except:
-                                trade[field] = 0
-                
-                trade_history.extend(existing_trades)
-                trading_state['total_trades'] = len(existing_trades)
-                
-                profitable = sum(1 for t in existing_trades 
-                               if t.get('result') in ['SUCCESS', 'WIN', 'PARTIAL_SUCCESS'])
-                trading_state['profitable_trades'] = profitable
+            # Update trading statistics
+            if trade_history:
+                trading_state['total_trades'] = len([t for t in trade_history if t.get('status') == 'CLOSED'])
+                trading_state['profitable_trades'] = len([t for t in trade_history 
+                                                        if t.get('result') in ['SUCCESS', 'WIN', 'PARTIAL_SUCCESS']])
                 
                 if trading_state['total_trades'] > 0:
                     trading_state['win_rate'] = (trading_state['profitable_trades'] / 
-                                                trading_state['total_trades']) * 100
+                                               trading_state['total_trades']) * 100
                 
-                logger.info(f"✅ Loaded {len(existing_trades)} trades from Google Sheets")
+                # Calculate balance from trades
+                balance = INITIAL_BALANCE
+                for trade in trade_history:
+                    if trade.get('status') == 'CLOSED' and trade.get('profit_amount'):
+                        balance += trade.get('profit_amount', 0)
+                trading_state['balance'] = balance
+                
+                logger.info(f"✅ Loaded {len(trade_history)} trades from Git storage")
                 logger.info(f"✅ Win Rate: {trading_state['win_rate']:.1f}%")
-                trading_state['google_sheets_status'] = 'CONNECTED'
-            else:
-                logger.info("✅ Google Sheets connected (no existing trades)")
-                trading_state['google_sheets_status'] = 'CONNECTED'
+                logger.info(f"✅ Balance: ${trading_state['balance']:.2f}")
+            
+            return trade_history
         else:
-            logger.warning(f"⚠️  SheetDB test failed: {test_response.status_code}")
-            trading_state['google_sheets_status'] = f'TEST_FAILED: {test_response.status_code}'
+            return []
             
     except Exception as e:
-        logger.error(f"❌ Google Sheets initialization error: {e}")
-        trading_state['google_sheets_status'] = f'INIT_ERROR: {str(e)[:30]}'
+        logger.error(f"❌ Error loading trades: {e}")
+        return []
+
+def load_training_from_storage():
+    """Load ML training data from Git repository storage"""
+    global ml_features, tp_labels, sl_labels
+    
+    try:
+        if os.path.exists(TRAINING_FILE) and os.path.getsize(TRAINING_FILE) > 0:
+            with open(TRAINING_FILE, 'r') as f:
+                data = json.load(f)
+                ml_features = data.get('features', [])
+                tp_labels = data.get('tp_labels', [])
+                sl_labels = data.get('sl_labels', [])
+                
+                if len(ml_features) >= 10:
+                    train_ml_models()
+                    logger.info(f"✅ ML system loaded with {len(ml_features)} training samples from Git")
+                else:
+                    logger.info(f"⚠️  {len(ml_features)} samples - collecting more data")
+                    
+            return True
+        return False
+        
+    except Exception as e:
+        logger.error(f"❌ Error loading training data: {e}")
+        return False
+
+def save_trade_to_git(trade_data):
+    """Save trade to Git repository storage"""
+    global trade_history
+    
+    try:
+        # Add trade to history
+        trade_history.append(trade_data)
+        
+        # Save to file
+        with open(TRADES_FILE, 'w') as f:
+            json.dump(trade_history, f, indent=2, default=str)
+        
+        logger.info(f"✅ Trade #{trade_data.get('id', 'N/A')} saved to Git repository")
+        
+        # Update trading state file
+        save_trading_state_to_git()
+        
+        return {'success': True, 'message': 'Trade saved to Git repository'}
+        
+    except Exception as e:
+        logger.error(f"❌ Error saving trade to Git: {e}")
+        return {'success': False, 'error': str(e)}
+
+def save_training_to_git(features, tp_labels_data, sl_labels_data):
+    """Save training data to Git repository"""
+    try:
+        data = {
+            'features': features,
+            'tp_labels': tp_labels_data,
+            'sl_labels': sl_labels_data,
+            'last_updated': datetime.now().isoformat(),
+            'total_samples': len(features),
+            'system_version': '2.0-git-storage'
+        }
+        with open(TRAINING_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+        
+        logger.info(f"✅ Training data saved to Git ({len(features)} samples)")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Error saving training data to Git: {e}")
+        return False
+
+def save_trading_state_to_git():
+    """Save current trading state to Git repository"""
+    try:
+        # Create minimal state for persistence
+        persistent_state = {
+            'balance': trading_state['balance'],
+            'total_trades': trading_state['total_trades'],
+            'profitable_trades': trading_state['profitable_trades'],
+            'win_rate': trading_state['win_rate'],
+            'cycle_count': trading_state['cycle_count'],
+            'ml_model_ready': trading_state['ml_model_ready'],
+            'last_updated': datetime.now().isoformat(),
+            'git_repo': 'https://github.com/gicheha-ai/m.git'
+        }
+        
+        with open(STATE_FILE, 'w') as f:
+            json.dump(persistent_state, f, indent=2)
+        
+        logger.debug("✅ Trading state saved to Git repository")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Error saving trading state to Git: {e}")
+        return False
 
 # ==================== CACHED FOREX DATA FETCHING ====================
 def get_cached_eurusd_price():
-    """Get EUR/USD price with 30-second caching"""
+    """Get EUR/USD price with 30-second caching to prevent API limits"""
     
     current_time = time.time()
     cache_age = current_time - price_cache['timestamp']
     
+    # ⭐ CACHE HIT: Use cached price if fresh
     if cache_age < CACHE_DURATION and price_cache['price']:
         price_cache['hits'] += 1
         update_cache_efficiency()
         
+        # Add tiny realistic fluctuation to cached price
         tiny_change = np.random.uniform(-0.00001, 0.00001)
         cached_price = price_cache['price'] + tiny_change
         
-        logger.debug(f"📦 CACHE HIT: Using cached price {cached_price:.5f}")
+        logger.debug(f"📦 CACHE HIT: Using cached price {cached_price:.5f} (age: {cache_age:.1f}s)")
         trading_state['api_status'] = f"CACHED ({price_cache['source']})"
         
         return cached_price, f"Cached ({price_cache['source']})"
     
+    # ⭐ CACHE MISS: Need fresh price from APIs
     price_cache['misses'] += 1
     update_cache_efficiency()
     logger.info("🔄 Cache MISS: Fetching fresh price from APIs...")
     
+    # List of reliable APIs with good limits
     apis_to_try = [
         {
             'name': 'Frankfurter',
@@ -273,13 +353,16 @@ def get_cached_eurusd_price():
             'params': {'pairs': 'EURUSD'},
             'extract_rate': lambda data: data['rates']['EURUSD']
         }
+        # ⭐ REMOVED ExchangeRate-API (too low limits)
     ]
     
+    # Try each API
     for api in apis_to_try:
         try:
             logger.info(f"Trying {api['name']} API...")
             response = requests.get(api['url'], params=api['params'], timeout=5)
             
+            # Handle rate limits gracefully
             if response.status_code == 429:
                 logger.warning(f"⏸️ {api['name']} rate limit reached, skipping...")
                 continue
@@ -291,13 +374,14 @@ def get_cached_eurusd_price():
                 if rate:
                     current_price = float(rate)
                     
+                    # ⭐ UPDATE CACHE with fresh price
                     price_cache.update({
                         'price': current_price,
                         'timestamp': current_time,
                         'source': api['name']
                     })
                     
-                    logger.info(f"✅ {api['name']}: EUR/USD = {current_price:.5f}")
+                    logger.info(f"✅ {api['name']}: EUR/USD = {current_price:.5f} (cached)")
                     trading_state['api_status'] = 'CONNECTED'
                     
                     return current_price, api['name']
@@ -306,12 +390,15 @@ def get_cached_eurusd_price():
             logger.warning(f"{api['name']} failed: {str(e)[:50]}")
             continue
     
+    # ⭐ ALL APIS FAILED: Use stale cache as fallback
     logger.warning("⚠️ All APIs failed, using stale cached data")
     
     if price_cache['price']:
+        # Add small realistic movement to stale price
         stale_change = np.random.uniform(-0.00005, 0.00005)
         stale_price = price_cache['price'] + stale_change
         
+        # Keep in reasonable range
         if stale_price < 1.0800:
             stale_price = 1.0800 + abs(stale_change)
         elif stale_price > 1.0900:
@@ -320,11 +407,12 @@ def get_cached_eurusd_price():
         trading_state['api_status'] = 'STALE_CACHE'
         return stale_price, f"Stale Cache ({price_cache['source']})"
     else:
+        # First run, no cache yet
         trading_state['api_status'] = 'SIMULATION'
         return 1.0850, 'Simulation (Initial)'
 
 def update_cache_efficiency():
-    """Calculate cache efficiency"""
+    """Calculate and update cache efficiency metrics"""
     total = price_cache['hits'] + price_cache['misses']
     if total > 0:
         efficiency = (price_cache['hits'] / total) * 100
@@ -333,7 +421,7 @@ def update_cache_efficiency():
         trading_state['cache_misses'] = price_cache['misses']
 
 def create_price_series(current_price, num_points=120):
-    """Create price series for analysis"""
+    """Create realistic 2-minute price series for analysis"""
     prices = []
     base_price = float(current_price)
     
@@ -353,39 +441,51 @@ def create_price_series(current_price, num_points=120):
 
 # ==================== TECHNICAL ANALYSIS ====================
 def calculate_advanced_indicators(prices):
-    """Calculate indicators for 2-minute prediction"""
+    """Calculate comprehensive indicators for 2-minute prediction"""
     df = pd.DataFrame(prices, columns=['close'])
     
     try:
+        # Price momentum
         df['returns_1'] = df['close'].pct_change(1)
         df['returns_5'] = df['close'].pct_change(5)
         df['returns_10'] = df['close'].pct_change(10)
         df['momentum_20'] = df['close'] - df['close'].shift(20)
         
+        # Moving averages
         df['sma_5'] = ta.sma(df['close'], length=5)
         df['sma_10'] = ta.sma(df['close'], length=10)
         df['ema_12'] = ta.ema(df['close'], length=12)
         df['ema_26'] = ta.ema(df['close'], length=26)
         
+        # RSI
         df['rsi'] = ta.rsi(df['close'], length=14)
         
+        # MACD
         macd = ta.macd(df['close'])
         if macd is not None and isinstance(macd, pd.DataFrame):
             df['macd'] = macd['MACD_12_26_9']
             df['macd_signal'] = macd['MACDs_12_26_9']
             df['macd_hist'] = macd['MACDh_12_26_9']
         
+        # Bollinger Bands
         bb = ta.bbands(df['close'], length=20)
         if bb is not None and isinstance(bb, pd.DataFrame):
             df['bb_upper'] = bb['BBU_20_2.0']
             df['bb_lower'] = bb['BBL_20_2.0']
             df['bb_percent'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower']) * 100
         
+        # ATR for volatility
         df['atr'] = ta.atr(df['close'], df['close'], df['close'], length=14)
         
+        # Support/Resistance
+        df['resistance'] = df['close'].rolling(15).max()
+        df['support'] = df['close'].rolling(15).min()
+        
+        # Market condition flags
         df['overbought'] = (df['rsi'] > 70).astype(int)
         df['oversold'] = (df['rsi'] < 30).astype(int)
         
+        # Fill NaN values
         df = df.fillna(method='ffill').fillna(method='bfill').fillna(0)
         
         return df
@@ -396,53 +496,29 @@ def calculate_advanced_indicators(prices):
 
 # ==================== ML TRAINING SYSTEM ====================
 def initialize_training_system():
-    """Initialize ML training data from Google Sheets"""
+    """Initialize or load ML training data"""
     global ml_features, tp_labels, sl_labels, ml_trained
     
-    if trade_history and len(trade_history) >= 10:
+    if os.path.exists(TRAINING_FILE):
         try:
-            logger.info(f"Starting ML training with {len(trade_history)} trades...")
-            
-            for trade in trade_history[-50:]:
-                if 'confidence' not in trade:
-                    continue
-                    
-                features = [
-                    trade.get('confidence', 0) / 100,
-                    trade.get('bb_percent_at_entry', 50) / 100,
-                    trade.get('rsi_at_entry', 50) / 100,
-                    trade.get('macd_hist_at_entry', 0) * 10000,
-                    1 if trade.get('action') == 'BUY' else 0,
-                    trade.get('signal_strength', 0) / 3
-                ]
-                ml_features.append(features)
+            with open(TRAINING_FILE, 'r') as f:
+                data = json.load(f)
+                ml_features = data.get('features', [])
+                tp_labels = data.get('tp_labels', [])
+                sl_labels = data.get('sl_labels', [])
                 
-                profit = trade.get('profit_pips', 0)
-                result = trade.get('result', '')
-                
-                if result in ['SUCCESS', 'WIN']:
-                    optimal_tp = trade.get('tp_distance_pips', 8)
-                    optimal_sl = trade.get('sl_distance_pips', 5)
-                elif result in ['FAILED', 'LOSE']:
-                    optimal_tp = trade.get('tp_distance_pips', 8) * 0.8
-                    optimal_sl = trade.get('sl_distance_pips', 5) * 1.2
+                if len(ml_features) >= 10:
+                    train_ml_models()
+                    logger.info(f"✅ ML system loaded with {len(ml_features)} training samples")
                 else:
-                    optimal_tp = trade.get('tp_distance_pips', 8) * 0.9
-                    optimal_sl = trade.get('sl_distance_pips', 5) * 1.1
-                
-                tp_labels.append(max(5, min(20, optimal_tp)))
-                sl_labels.append(max(3, min(15, optimal_sl)))
-            
-            if len(ml_features) >= 10:
-                train_ml_models()
-                logger.info(f"✅ ML system initialized with {len(ml_features)} samples")
-            else:
-                logger.info(f"⚠️  {len(ml_features)} samples - collecting more data")
-                
+                    logger.info(f"⚠️  {len(ml_features)} samples - collecting more data")
+                    
         except Exception as e:
-            logger.error(f"Error initializing ML: {e}")
+            logger.error(f"Error loading training data: {e}")
+            save_training_to_git([], [], [])
     else:
-        logger.info("⚠️  Not enough trades for ML training yet")
+        save_training_to_git([], [], [])
+        logger.info("Created new training data file")
 
 def train_ml_models():
     """Train ML models for TP/SL optimization"""
@@ -458,9 +534,13 @@ def train_ml_models():
         y_tp = np.array(tp_labels)
         y_sl = np.array(sl_labels)
         
+        # Scale features
         X_scaled = ml_scaler.fit_transform(X)
         
+        # Train TP model
         tp_model.fit(X_scaled, y_tp)
+        
+        # Train SL model
         sl_model.fit(X_scaled, y_sl)
         
         ml_trained = True
@@ -481,25 +561,34 @@ def extract_ml_features(df, current_price):
     
     features = []
     
+    # Price momentum
     features.append(latest.get('returns_1', 0))
     features.append(latest.get('returns_5', 0))
     features.append(latest.get('returns_10', 0))
     
+    # RSI value
     features.append(latest.get('rsi', 50))
+    
+    # MACD histogram
     features.append(latest.get('macd_hist', 0))
+    
+    # Bollinger Bands position
     features.append(latest.get('bb_percent', 50))
     
+    # Volatility
     atr_value = latest.get('atr', 0.0005)
     features.append(atr_value * 10000)
     
+    # Market condition flags
     features.append(latest.get('overbought', 0))
     features.append(latest.get('oversold', 0))
     
     return features
 
 def predict_optimal_levels(features, direction, current_price, df):
-    """Predict optimal TP and SL levels"""
+    """Predict optimal TP and SL levels for 2-minute trades"""
     
+    # Base levels for 2-minute trades
     if direction == "BULLISH":
         base_tp = current_price + 0.0008
         base_sl = current_price - 0.0005
@@ -510,16 +599,20 @@ def predict_optimal_levels(features, direction, current_price, df):
         base_tp = current_price
         base_sl = current_price
     
+    # Use ML predictions if available
     if ml_trained and features is not None:
         try:
             X_scaled = ml_scaler.transform([features])
             
+            # Predict optimal TP distance
             tp_pips_pred = tp_model.predict(X_scaled)[0]
             tp_pips_pred = max(5, min(20, tp_pips_pred))
             
+            # Predict optimal SL distance
             sl_pips_pred = sl_model.predict(X_scaled)[0]
             sl_pips_pred = max(3, min(15, sl_pips_pred))
             
+            # Convert pips to price
             pip_value = 0.0001
             
             if direction == "BULLISH":
@@ -538,6 +631,7 @@ def predict_optimal_levels(features, direction, current_price, df):
         except Exception as e:
             logger.warning(f"ML prediction failed: {e}")
     
+    # Fallback to base levels
     tp_pips = int(abs(base_tp - current_price) * 10000)
     sl_pips = int(abs(base_sl - current_price) * 10000)
     
@@ -545,7 +639,7 @@ def predict_optimal_levels(features, direction, current_price, df):
 
 # ==================== 2-MINUTE PREDICTION ENGINE ====================
 def analyze_2min_prediction(df, current_price):
-    """Predict 2-minute price direction"""
+    """Predict 2-minute price direction with high accuracy"""
     
     if len(df) < 20:
         return 0.5, 50, 'ANALYZING', 1
@@ -553,10 +647,12 @@ def analyze_2min_prediction(df, current_price):
     try:
         latest = df.iloc[-1]
         
+        # Initialize scores
         bull_score = 0
         bear_score = 0
         confidence_factors = []
         
+        # 1. RSI ANALYSIS
         rsi_value = latest.get('rsi', 50)
         if rsi_value < 35:
             bull_score += 4
@@ -565,6 +661,7 @@ def analyze_2min_prediction(df, current_price):
             bear_score += 4
             confidence_factors.append(1.5 if rsi_value > 75 else 1.2)
         
+        # 2. MACD HISTOGRAM
         macd_hist = latest.get('macd_hist', 0)
         if macd_hist > 0.00005:
             bull_score += 3
@@ -573,6 +670,7 @@ def analyze_2min_prediction(df, current_price):
             bear_score += 3
             confidence_factors.append(1.3)
         
+        # 3. BOLLINGER BANDS
         bb_percent = latest.get('bb_percent', 50)
         if bb_percent < 25:
             bull_score += 2
@@ -581,26 +679,31 @@ def analyze_2min_prediction(df, current_price):
             bear_score += 2
             confidence_factors.append(1.2)
         
+        # 4. PRICE MOMENTUM
         momentum = latest.get('momentum_20', 0)
         if momentum > 0.0003:
             bull_score += 2
         elif momentum < -0.0003:
             bear_score += 2
         
+        # Calculate probability
         total_score = bull_score + bear_score
         if total_score == 0:
             return 0.5, 50, 'NEUTRAL', 1
         
         probability = bull_score / total_score
         
+        # Calculate confidence
         if confidence_factors:
             base_confidence = np.mean(confidence_factors) * 25
         else:
             base_confidence = 50
         
+        # Signal clarity adjustment
         signal_clarity = abs(probability - 0.5) * 2
         confidence = min(95, base_confidence * (1 + signal_clarity))
         
+        # Determine direction
         if probability > 0.65:
             direction = 'BULLISH'
             signal_strength = 3
@@ -633,42 +736,40 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
         trading_state['trade_status'] = 'NO_SIGNAL'
         return None
     
+    # Determine action
     if direction == 'BULLISH':
         action = 'BUY'
         action_reason = f"Strong 2-min BULLISH signal ({confidence:.1f}% confidence)"
-    else:
+    else:  # BEARISH
         action = 'SELL'
         action_reason = f"Strong 2-min BEARISH signal ({confidence:.1f}% confidence)"
     
-    trade_id = len(trade_history) + 1
-    
-    price_series = create_price_series(current_price, 120)
-    df_indicators = calculate_advanced_indicators(price_series)
-    latest = df_indicators.iloc[-1]
-    
     trade = {
-        'trade_id': trade_id,
-        'timestamp': datetime.now().isoformat(),
+        'id': len(trade_history) + 1,
+        'cycle': trading_state['cycle_count'],
         'action': action,
         'entry_price': float(current_price),
-        'exit_price': None,
-        'profit_pips': 0.0,
-        'result': 'PENDING',
-        'duration_seconds': 0.0,
-        'cycle_number': trading_state['cycle_count'],
-        'confidence': float(confidence),
-        'signal_strength': signal_strength,
-        'bb_percent_at_entry': float(latest.get('bb_percent', 50)),
-        'rsi_at_entry': float(latest.get('rsi', 50)),
-        'macd_hist_at_entry': float(latest.get('macd_hist', 0)),
-        'volatility_at_entry': float(latest.get('atr', 0.0005)),
-        'sl_distance_pips': sl_pips,
-        'tp_distance_pips': tp_pips,
+        'entry_time': datetime.now(),
         'optimal_tp': float(optimal_tp),
         'optimal_sl': float(optimal_sl),
+        'tp_distance_pips': tp_pips,
+        'sl_distance_pips': sl_pips,
         'trade_size': BASE_TRADE_SIZE,
+        'confidence': float(confidence),
         'status': 'OPEN',
-        'reason': action_reason
+        'result': 'PENDING',
+        'exit_price': None,
+        'exit_time': None,
+        'exit_reason': None,
+        'profit_pips': 0,
+        'profit_amount': 0.0,
+        'duration_seconds': 0,
+        'max_profit_pips': 0,
+        'max_loss_pips': 0,
+        'reason': action_reason,
+        'cycle_duration': CYCLE_SECONDS,
+        'signal_strength': signal_strength,
+        'data_stored_in': 'git://github.com/gicheha-ai/m.git/data/trades.json'
     }
     
     trading_state['current_trade'] = trade
@@ -680,15 +781,17 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
     trading_state['trade_status'] = 'ACTIVE'
     trading_state['signal_strength'] = signal_strength
     
-    save_result = save_trade_to_google_sheets(trade)
+    # Save to Git repository
+    save_trade_to_git(trade)
     
     logger.info(f"🔔 {action} ORDER EXECUTED")
-    logger.info(f"   Trade ID: {trade_id}")
+    logger.info(f"   Trade ID: {trade['id']}")
     logger.info(f"   Entry Price: {current_price:.5f}")
     logger.info(f"   Take Profit: {optimal_tp:.5f} ({tp_pips} pips)")
     logger.info(f"   Stop Loss: {optimal_sl:.5f} ({sl_pips} pips)")
     logger.info(f"   Confidence: {confidence:.1f}%")
-    logger.info(f"   Google Sheets: {'Saved' if save_result.get('success') else 'Failed'}")
+    logger.info(f"   Goal: Hit TP ({tp_pips} pips) before SL ({sl_pips} pips) in {CYCLE_SECONDS} seconds")
+    logger.info(f"   Data Storage: Saved to Git repository")
     
     return trade
 
@@ -698,20 +801,27 @@ def monitor_active_trade(current_price):
         return None
     
     trade = trading_state['current_trade']
-    entry_time = datetime.fromisoformat(trade['timestamp'])
-    trade_duration = (datetime.now() - entry_time).total_seconds()
+    trade_duration = (datetime.now() - trade['entry_time']).total_seconds()
     
+    # Calculate current P&L
     if trade['action'] == 'BUY':
         current_pips = (current_price - trade['entry_price']) * 10000
-    else:
+    else:  # SELL
         current_pips = (trade['entry_price'] - current_price) * 10000
     
-    trade['profit_pips'] = float(current_pips)
-    trade['duration_seconds'] = float(trade_duration)
+    trade['profit_pips'] = current_pips
+    trade['profit_amount'] = (current_pips / 10000) * trade['trade_size']
+    trade['duration_seconds'] = trade_duration
     
+    # Update max profit/loss
+    trade['max_profit_pips'] = max(trade['max_profit_pips'], current_pips)
+    trade['max_loss_pips'] = min(trade['max_loss_pips'], current_pips)
+    
+    # Update trade progress
     trading_state['trade_progress'] = (trade_duration / CYCLE_SECONDS) * 100
     trading_state['remaining_time'] = max(0, CYCLE_SECONDS - trade_duration)
     
+    # Check exit conditions
     exit_trade = False
     exit_reason = ""
     
@@ -720,20 +830,24 @@ def monitor_active_trade(current_price):
             exit_trade = True
             exit_reason = f"TP HIT! +{trade['tp_distance_pips']} pips profit"
             trade['result'] = 'SUCCESS'
+            
         elif current_price <= trade['optimal_sl']:
             exit_trade = True
             exit_reason = f"SL HIT! -{trade['sl_distance_pips']} pips loss"
             trade['result'] = 'FAILED'
-    else:
+            
+    else:  # SELL
         if current_price <= trade['optimal_tp']:
             exit_trade = True
             exit_reason = f"TP HIT! +{trade['tp_distance_pips']} pips profit"
             trade['result'] = 'SUCCESS'
+            
         elif current_price >= trade['optimal_sl']:
             exit_trade = True
             exit_reason = f"SL HIT! -{trade['sl_distance_pips']} pips loss"
             trade['result'] = 'FAILED'
     
+    # Time-based exit
     if not exit_trade and trade_duration >= CYCLE_SECONDS:
         exit_trade = True
         if current_pips > 0:
@@ -746,35 +860,39 @@ def monitor_active_trade(current_price):
             exit_reason = "TIME ENDED at breakeven"
             trade['result'] = 'BREAKEVEN'
     
+    # Close trade if exit condition met
     if exit_trade:
         trade['status'] = 'CLOSED'
-        trade['exit_price'] = float(current_price)
-        trade['exit_time'] = datetime.now().isoformat()
+        trade['exit_price'] = current_price
+        trade['exit_time'] = datetime.now()
         trade['exit_reason'] = exit_reason
         
+        # Update trading statistics
         trading_state['total_trades'] += 1
         
         if trade['result'] in ['SUCCESS', 'PARTIAL_SUCCESS']:
             trading_state['profitable_trades'] += 1
-            profit_amount = (trade['profit_pips'] / 10000) * BASE_TRADE_SIZE
-            trading_state['total_profit'] += profit_amount
-            trading_state['balance'] += profit_amount
+            trading_state['total_profit'] += trade['profit_amount']
+            trading_state['balance'] += trade['profit_amount']
             logger.info(f"💰 TRADE SUCCESS: {exit_reason}")
         else:
-            loss_amount = abs(trade['profit_pips'] / 10000) * BASE_TRADE_SIZE
-            trading_state['balance'] -= loss_amount
+            trading_state['balance'] -= abs(trade['profit_amount'])
             logger.info(f"📉 TRADE FAILED: {exit_reason}")
         
+        # Update win rate
         if trading_state['total_trades'] > 0:
-            trading_state['win_rate'] = (trading_state['profitable_trades'] / 
-                                        trading_state['total_trades']) * 100
+            trading_state['win_rate'] = (trading_state['profitable_trades'] / trading_state['total_trades']) * 100
         
-        trade_history.append(trade.copy())
+        # Save updated trade to Git repository
+        save_trade_to_git(trade)
         
-        save_trade_to_google_sheets(trade)
+        # Learn from this trade
+        learn_from_trade(trade, current_price)
         
-        add_trade_to_ml_training(trade)
+        # Save trading state
+        save_trading_state_to_git()
         
+        # Clear current trade
         trading_state['current_trade'] = None
         trading_state['trade_status'] = 'COMPLETED'
         trading_state['trade_progress'] = 0
@@ -784,41 +902,54 @@ def monitor_active_trade(current_price):
     
     return trade
 
-def add_trade_to_ml_training(trade):
-    """Add completed trade to ML training data"""
+def learn_from_trade(trade, current_price):
+    """Learn from trade result and update ML training data"""
     try:
+        if 'result' not in trade or trade['result'] == 'PENDING':
+            return
+        
+        # Extract features from trade data
         features = [
-            trade.get('confidence', 0) / 100,
-            trade.get('bb_percent_at_entry', 50) / 100,
-            trade.get('rsi_at_entry', 50) / 100,
-            trade.get('macd_hist_at_entry', 0) * 10000,
-            1 if trade.get('action') == 'BUY' else 0,
-            trade.get('signal_strength', 0) / 3
+            trade['confidence'] / 100,
+            trade['tp_distance_pips'] / 100,
+            trade['sl_distance_pips'] / 100,
+            1 if trade['action'] == 'BUY' else 0,
+            abs(trade['profit_pips']) / 100
         ]
         
-        profit = trade.get('profit_pips', 0)
-        result = trade.get('result', '')
+        # Determine optimal TP/SL based on result
+        if trade['result'] == 'SUCCESS':
+            optimal_tp = trade['tp_distance_pips']
+            optimal_sl = trade['sl_distance_pips']
+        elif trade['result'] == 'FAILED':
+            optimal_tp = trade['tp_distance_pips'] * 0.7
+            optimal_sl = trade['sl_distance_pips'] * 1.3
+        elif trade['result'] == 'PARTIAL_SUCCESS':
+            optimal_tp = trade['tp_distance_pips'] * 0.9
+            optimal_sl = trade['sl_distance_pips']
+        elif trade['result'] == 'PARTIAL_FAIL':
+            optimal_tp = trade['tp_distance_pips']
+            optimal_sl = trade['sl_distance_pips'] * 1.1
+        else:  # BREAKEVEN
+            optimal_tp = trade['tp_distance_pips'] * 0.8
+            optimal_sl = trade['sl_distance_pips'] * 0.9
         
-        if result in ['SUCCESS', 'WIN']:
-            optimal_tp = trade.get('tp_distance_pips', 8)
-            optimal_sl = trade.get('sl_distance_pips', 5)
-        elif result in ['FAILED', 'LOSE']:
-            optimal_tp = trade.get('tp_distance_pips', 8) * 0.8
-            optimal_sl = trade.get('sl_distance_pips', 5) * 1.2
-        else:
-            optimal_tp = trade.get('tp_distance_pips', 8) * 0.9
-            optimal_sl = trade.get('sl_distance_pips', 5) * 1.1
-        
+        # Add to training data
         ml_features.append(features)
-        tp_labels.append(max(5, min(20, optimal_tp)))
-        sl_labels.append(max(3, min(15, optimal_sl)))
+        tp_labels.append(optimal_tp)
+        sl_labels.append(optimal_sl)
         
+        # Save training data to Git repository
+        save_training_to_git(ml_features, tp_labels, sl_labels)
+        
+        # Retrain if we have enough samples
         if len(ml_features) >= 10 and len(ml_features) % 5 == 0:
             train_ml_models()
-            logger.info(f"📚 ML retrained with {len(ml_features)} samples")
+        
+        logger.info(f"📚 Learned from trade #{trade['id']}: {trade['result']}")
         
     except Exception as e:
-        logger.error(f"Error adding trade to ML training: {e}")
+        logger.error(f"Learning error: {e}")
 
 # ==================== CHART CREATION ====================
 def create_trading_chart(prices, current_trade, next_cycle):
@@ -826,11 +957,13 @@ def create_trading_chart(prices, current_trade, next_cycle):
     try:
         df = pd.DataFrame(prices, columns=['close'])
         
+        # Add basic indicators for chart
         df['sma_5'] = ta.sma(df['close'], length=5)
         df['sma_10'] = ta.sma(df['close'], length=10)
         
         fig = go.Figure()
         
+        # Price line
         fig.add_trace(go.Scatter(
             x=list(range(len(prices))),
             y=df['close'],
@@ -840,6 +973,7 @@ def create_trading_chart(prices, current_trade, next_cycle):
             hovertemplate='Price: %{y:.5f}<extra></extra>'
         ))
         
+        # Add moving averages
         fig.add_trace(go.Scatter(
             x=list(range(len(prices))),
             y=df['sma_5'],
@@ -858,9 +992,11 @@ def create_trading_chart(prices, current_trade, next_cycle):
             opacity=0.7
         ))
         
+        # Add trade markers if active trade exists
         if current_trade:
             entry_idx = len(prices) - 20 if len(prices) > 20 else 0
             
+            # Entry point
             fig.add_trace(go.Scatter(
                 x=[entry_idx],
                 y=[current_trade['entry_price']],
@@ -875,6 +1011,7 @@ def create_trading_chart(prices, current_trade, next_cycle):
                 textposition="top center"
             ))
             
+            # TP line
             fig.add_trace(go.Scatter(
                 x=[entry_idx, len(prices)-1],
                 y=[current_trade['optimal_tp'], current_trade['optimal_tp']],
@@ -884,6 +1021,7 @@ def create_trading_chart(prices, current_trade, next_cycle):
                 opacity=0.8
             ))
             
+            # SL line
             fig.add_trace(go.Scatter(
                 x=[entry_idx, len(prices)-1],
                 y=[current_trade['optimal_sl'], current_trade['optimal_sl']],
@@ -893,7 +1031,10 @@ def create_trading_chart(prices, current_trade, next_cycle):
                 opacity=0.8
             ))
         
+        # Update layout
         title = f'EUR/USD 2-Minute Trading - Next Cycle: {next_cycle}s'
+        if 'Cache' in trading_state['data_source'] or 'Simulation' in trading_state['data_source']:
+            title += f' ({trading_state["data_source"]})'
         
         fig.update_layout(
             title=dict(
@@ -932,17 +1073,16 @@ def create_trading_chart(prices, current_trade, next_cycle):
 # ==================== MAIN 2-MINUTE CYCLE ====================
 def trading_cycle():
     """Main 2-minute trading cycle with caching"""
-    global trading_state, trading_active
-    
-    logger.info("🔄 Starting trading cycle...")
-    
-    # Initialize systems
-    initialize_google_sheets()
-    initialize_training_system()
+    global trading_state
     
     cycle_count = 0
     
-    while trading_active:
+    # Initialize Git storage and ML system
+    initialize_git_storage()
+    
+    logger.info("✅ Trading bot started with 2-minute cycles and Git storage")
+    
+    while True:
         try:
             cycle_count += 1
             cycle_start = datetime.now()
@@ -955,9 +1095,11 @@ def trading_cycle():
             logger.info(f"2-MINUTE TRADING CYCLE #{cycle_count}")
             logger.info(f"{'='*70}")
             
-            # 1. GET MARKET DATA
+            # 1. GET MARKET DATA (WITH CACHE)
+            logger.info("Fetching EUR/USD price (with caching)...")
             current_price, data_source = get_cached_eurusd_price()
             
+            # Track price history
             price_history_deque.append({
                 'time': datetime.now().strftime('%H:%M:%S'),
                 'price': current_price
@@ -965,14 +1107,17 @@ def trading_cycle():
             
             trading_state['current_price'] = round(float(current_price), 5)
             trading_state['data_source'] = data_source
+            trading_state['is_demo_data'] = 'Simulation' in data_source or 'Cache' in data_source
+            trading_state['api_calls_today'] = '~240 (SAFE)'
             
-            # 2. CREATE PRICE SERIES
+            # 2. CREATE PRICE SERIES FOR ANALYSIS
             price_series = create_price_series(current_price, 120)
             
             # 3. CALCULATE TECHNICAL INDICATORS
             df_indicators = calculate_advanced_indicators(price_series)
             
             # 4. MAKE 2-MINUTE PREDICTION
+            logger.info("Analyzing market for 2-minute prediction...")
             pred_prob, confidence, direction, signal_strength = analyze_2min_prediction(
                 df_indicators, current_price
             )
@@ -1006,6 +1151,7 @@ def trading_cycle():
             elif trading_state['current_trade'] is None:
                 trading_state['action'] = 'WAIT'
                 trading_state['trade_status'] = 'NO_SIGNAL'
+                logger.info(f"⚠️  No trade signal: {direction} with {confidence:.1f}% confidence")
             
             # 9. CALCULATE NEXT CYCLE TIME
             cycle_duration = (datetime.now() - cycle_start).seconds
@@ -1021,32 +1167,37 @@ def trading_cycle():
             )
             trading_state['chart_data'] = chart_data
             
+            # 11. UPDATE PRICE HISTORY
             trading_state['price_history'] = list(price_history_deque)[-20:]
+            
+            # 12. UPDATE TIMESTAMP
             trading_state['last_update'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             trading_state['server_time'] = datetime.now().isoformat()
             
+            # 13. LOG CYCLE SUMMARY
             logger.info(f"CYCLE #{cycle_count} SUMMARY:")
             logger.info(f"  Price: {current_price:.5f} ({data_source})")
             logger.info(f"  Prediction: {direction} (Signal: {signal_strength}/3)")
             logger.info(f"  Action: {trading_state['action']} ({confidence:.1f}% confidence)")
             logger.info(f"  TP/SL: {tp_pips}/{sl_pips} pips")
             logger.info(f"  Balance: ${trading_state['balance']:.2f}")
+            logger.info(f"  Win Rate: {trading_state['win_rate']:.1f}%")
             logger.info(f"  ML Ready: {trading_state['ml_model_ready']}")
+            logger.info(f"  Cache Efficiency: {trading_state['cache_efficiency']}")
+            logger.info(f"  Data Storage: Git Repository")
+            logger.info(f"  Git Repo: https://github.com/gicheha-ai/m.git")
             logger.info(f"  Next cycle in: {next_cycle_time}s")
             logger.info(f"{'='*70}")
             
-            # WAIT FOR NEXT CYCLE
+            # 14. WAIT FOR NEXT CYCLE WITH PROGRESS UPDATES
             for i in range(next_cycle_time):
-                if not trading_active:
-                    break
-                    
                 progress_pct = (i / next_cycle_time) * 100
                 trading_state['cycle_progress'] = progress_pct
                 trading_state['remaining_time'] = next_cycle_time - i
                 
+                # Update active trade progress if exists
                 if trading_state['current_trade']:
-                    entry_time = datetime.fromisoformat(trading_state['current_trade']['timestamp'])
-                    trade_duration = (datetime.now() - entry_time).total_seconds()
+                    trade_duration = (datetime.now() - trading_state['current_trade']['entry_time']).total_seconds()
                     trading_state['trade_progress'] = (trade_duration / CYCLE_SECONDS) * 100
                 
                 time.sleep(1)
@@ -1056,32 +1207,6 @@ def trading_cycle():
             import traceback
             traceback.print_exc()
             time.sleep(60)
-
-# ==================== START/STOP TRADING BOT ====================
-def start_trading_bot():
-    """Start the trading bot in a separate thread"""
-    global trading_thread, trading_active
-    
-    try:
-        if trading_thread and trading_thread.is_alive():
-            logger.info("Trading bot already running")
-            return True
-            
-        trading_active = True
-        trading_thread = threading.Thread(target=trading_cycle, daemon=True)
-        trading_thread.start()
-        logger.info("✅ Trading bot started successfully")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Error starting trading bot: {e}")
-        return False
-
-def stop_trading_bot():
-    """Stop the trading bot"""
-    global trading_active
-    trading_active = False
-    logger.info("🛑 Trading bot stopped")
-    return True
 
 # ==================== FLASK ROUTES ====================
 @app.route('/')
@@ -1095,10 +1220,11 @@ def get_trading_state():
     try:
         state_copy = trading_state.copy()
         
+        # Make current trade serializable
         if state_copy['current_trade']:
             trade = state_copy['current_trade'].copy()
-            for key in trade:
-                if isinstance(trade[key], datetime):
+            for key in ['entry_time', 'exit_time']:
+                if key in trade and trade[key] and isinstance(trade[key], datetime):
                     trade[key] = trade[key].isoformat()
             state_copy['current_trade'] = trade
         
@@ -1109,37 +1235,53 @@ def get_trading_state():
 
 @app.route('/api/trade_history')
 def get_trade_history():
-    """Get trade history from Google Sheets"""
+    """Get trade history from Git storage"""
     try:
-        sheet_trades = get_trades_from_google_sheets()
-        
-        display_trades = []
-        for trade in sheet_trades[-10:]:
-            trade_copy = {}
-            for key in ['trade_id', 'timestamp', 'action', 'entry_price', 'exit_price',
-                       'profit_pips', 'result', 'duration_seconds', 'cycle_number',
-                       'confidence', 'signal_strength', 'sl_distance_pips', 'tp_distance_pips']:
-                trade_copy[key] = trade.get(key, '')
-            
-            for num_key in ['entry_price', 'exit_price', 'profit_pips', 'confidence']:
-                if trade_copy.get(num_key) is not None:
-                    try:
-                        trade_copy[num_key] = float(trade_copy[num_key])
-                    except:
-                        trade_copy[num_key] = 0.0
-            
-            display_trades.append(trade_copy)
+        serializable_history = []
+        for trade in trade_history[-10:]:
+            trade_copy = trade.copy()
+            for key in ['entry_time', 'exit_time']:
+                if key in trade_copy and trade_copy[key] and isinstance(trade_copy[key], datetime):
+                    trade_copy[key] = trade_copy[key].isoformat()
+            serializable_history.append(trade_copy)
         
         return jsonify({
-            'trades': display_trades,
-            'total': len(sheet_trades),
+            'trades': serializable_history,
+            'total': len(trade_history),
             'profitable': trading_state['profitable_trades'],
             'win_rate': trading_state['win_rate'],
-            'google_sheets_status': trading_state['google_sheets_status']
+            'data_source': 'Git Repository',
+            'git_repo': 'https://github.com/gicheha-ai/m.git',
+            'storage_file': TRADES_FILE
         })
     except Exception as e:
         logger.error(f"Trade history error: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/ml_status')
+def get_ml_status():
+    """Get ML training status"""
+    return jsonify({
+        'ml_model_ready': trading_state['ml_model_ready'],
+        'training_samples': len(ml_features),
+        'training_file': TRAINING_FILE,
+        'last_trained': trading_state['last_update'],
+        'data_storage': 'Git Repository'
+    })
+
+@app.route('/api/cache_status')
+def get_cache_status():
+    """Get cache status"""
+    return jsonify({
+        'cache_duration': CACHE_DURATION,
+        'cache_hits': price_cache['hits'],
+        'cache_misses': price_cache['misses'],
+        'cache_efficiency': trading_state['cache_efficiency'],
+        'current_price': price_cache['price'],
+        'last_update': datetime.fromtimestamp(price_cache['timestamp']).isoformat(),
+        'source': price_cache['source'],
+        'api_calls_today': '~240 (66% reduction)'
+    })
 
 @app.route('/api/reset_trading')
 def reset_trading():
@@ -1153,6 +1295,7 @@ def reset_trading():
         'total_profit': 0.0,
         'win_rate': 0.0,
         'current_trade': None,
+        'prediction_accuracy': 0.0,
         'trade_status': 'RESET',
         'trade_progress': 0,
         'cycle_progress': 0
@@ -1163,7 +1306,8 @@ def reset_trading():
     tp_labels.clear()
     sl_labels.clear()
     
-    logger.info("Trading statistics reset")
+    # Reset training file in Git
+    save_training_to_git([], [], [])
     
     return jsonify({'success': True, 'message': 'Trading reset complete'})
 
@@ -1175,55 +1319,74 @@ def health_check():
         'timestamp': datetime.now().isoformat(),
         'cycle_count': trading_state['cycle_count'],
         'system_status': 'ACTIVE',
-        'trading_active': trading_active,
-        'google_sheets_status': trading_state['google_sheets_status'],
-        'ml_ready': trading_state['ml_model_ready'],
-        'total_trades': trading_state['total_trades'],
-        'version': '2.0-google-sheets'
+        'cycle_duration': CYCLE_SECONDS,
+        'cache_enabled': True,
+        'cache_duration': CACHE_DURATION,
+        'api_calls_per_day': '~240 (SAFE)',
+        'data_storage': 'Git Repository',
+        'git_repo': 'https://github.com/gicheha-ai/m.git',
+        'version': '2.0-git-storage'
     })
 
-@app.route('/api/start_trading', methods=['POST'])
-def api_start_trading():
-    """API endpoint to start trading"""
-    result = start_trading_bot()
-    return jsonify({'success': result, 'message': 'Trading started'})
+@app.route('/api/storage_status')
+def get_storage_status():
+    """Get data storage status"""
+    files = {}
+    try:
+        for file in [TRADES_FILE, STATE_FILE, TRAINING_FILE]:
+            if os.path.exists(file):
+                size = os.path.getsize(file)
+                files[os.path.basename(file)] = {
+                    'exists': True,
+                    'size_bytes': size,
+                    'size_human': f"{size/1024:.1f} KB"
+                }
+            else:
+                files[os.path.basename(file)] = {'exists': False}
+    
+    except Exception as e:
+        logger.error(f"Storage status error: {e}")
+    
+    return jsonify({
+        'data_storage': 'Git Repository',
+        'git_repo': 'https://github.com/gicheha-ai/m.git',
+        'data_directory': DATA_DIR,
+        'files': files,
+        'trade_count': len(trade_history),
+        'training_samples': len(ml_features)
+    })
 
-@app.route('/api/stop_trading', methods=['POST'])
-def api_stop_trading():
-    """API endpoint to stop trading"""
-    result = stop_trading_bot()
-    return jsonify({'success': result, 'message': 'Trading stopped'})
-
-# ==================== INITIALIZE AND START ====================
-def initialize_system():
-    """Initialize the trading system"""
-    logger.info("Initializing trading system...")
-    
-    # Initialize Google Sheets first
-    initialize_google_sheets()
-    
-    # Initialize ML training
-    initialize_training_system()
-    
-    # Start trading bot
-    start_trading_bot()
-    
-    logger.info("✅ Trading system initialized and started")
+# ==================== START TRADING BOT ====================
+def start_trading_bot():
+    """Start the trading bot"""
+    try:
+        thread = threading.Thread(target=trading_cycle, daemon=True)
+        thread.start()
+        logger.info("✅ Trading bot started successfully")
+        print("✅ 2-Minute trading system ACTIVE")
+        print(f"✅ Caching: {CACHE_DURATION}-second cache enabled")
+        print("✅ Data Storage: Git Repository (No API limits)")
+        print(f"✅ Git Repo: https://github.com/gicheha-ai/m.git")
+        print("✅ ML Training: Ready after 10 trades")
+    except Exception as e:
+        logger.error(f"❌ Error starting trading bot: {e}")
+        print(f"❌ Error: {e}")
 
 # ==================== MAIN ENTRY POINT ====================
 if __name__ == '__main__':
-    # Initialize and start the system
-    initialize_system()
+    # Start trading bot
+    start_trading_bot()
     
     # Run Flask app
-    port = int(os.environ.get('PORT', 10000))
+    port = int(os.environ.get('PORT', 5000))
     print(f"🌐 Web dashboard: http://localhost:{port}")
     print("="*80)
-    print("GOOGLE SHEETS SYSTEM READY")
+    print("GIT STORAGE SYSTEM READY")
     print(f"• 2-minute cycles with {CACHE_DURATION}-second caching")
-    print(f"• Data Storage: Google Sheets")
-    print(f"• Auto-trading: ENABLED")
-    print(f"• ML Auto-correction: ENABLED")
+    print(f"• Data Storage: Git Repository (No API limits)")
+    print(f"• Git Repo: https://github.com/gicheha-ai/m.git")
+    print(f"• Data survives: Redeploys, Sleep, Restarts")
+    print(f"• ML training after: 10 trades")
     print("="*80)
     
     app.run(

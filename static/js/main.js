@@ -1,6 +1,6 @@
 /**
  * EUR/USD Trading System - Main JavaScript Module
- * Fixed for 2-Minute Cycles with Google Sheets
+ * Fixed for 2-Minute Cycles with Git Repository Storage
  */
 
 // Configuration
@@ -17,7 +17,7 @@ let isAutoRefreshEnabled = true;
 
 // Initialize when page loads
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('EUR/USD 2-Minute Trading System Initialized');
+    console.log('EUR/USD 2-Minute Trading System Initialized (Git Storage)');
     
     // Initialize systems
     initializeDashboard();
@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Load initial data
     fetchTradingState();
     fetchTradeHistory();
+    fetchStorageStatus(); // ⭐ NEW: Check Git storage status
     
     // Set up event listeners
     setupEventListeners();
@@ -40,7 +41,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Initialize dashboard elements
 function initializeDashboard() {
-    console.log('Dashboard initialized (2-Minute Cycles)');
+    console.log('Dashboard initialized (2-Minute Cycles with Git Storage)');
     
     // Set initial values
     updateSystemStatus('Initializing...', 'warning');
@@ -48,6 +49,14 @@ function initializeDashboard() {
     
     // Set cycle duration displays
     updateElementText('remainingTime', `${CYCLE_DURATION}s`);
+    updateElementText('cycleDuration', `${CYCLE_DURATION}s`);
+    
+    // Update data storage info
+    updateElementText('dataStorage', `
+        <span class="badge bg-info">
+            <i class="bi bi-git"></i> Git Repository
+        </span>
+    `);
 }
 
 // Set up all event listeners
@@ -58,6 +67,7 @@ function setupEventListeners() {
         refreshBtn.addEventListener('click', function() {
             fetchTradingState();
             fetchTradeHistory();
+            fetchStorageStatus(); // ⭐ NEW: Refresh storage status
             showToast('Data refreshed manually', 'info');
         });
     }
@@ -66,9 +76,34 @@ function setupEventListeners() {
     const resetBtn = document.getElementById('resetBtn');
     if (resetBtn) {
         resetBtn.addEventListener('click', function() {
-            if (confirm('Reset trading statistics? This will clear local stats but preserve Google Sheets data.')) {
+            if (confirm('Are you sure you want to reset all trading statistics? This will clear trade history and reset balance to $10,000.')) {
                 resetTrading();
             }
+        });
+    }
+    
+    // Toggle auto-refresh
+    const autoRefreshToggle = document.getElementById('autoRefreshToggle');
+    if (autoRefreshToggle) {
+        autoRefreshToggle.addEventListener('click', function() {
+            toggleAutoRefresh();
+        });
+    }
+    
+    // Toggle chart fullscreen
+    const toggleChartBtn = document.getElementById('toggleChart');
+    if (toggleChartBtn) {
+        toggleChartBtn.addEventListener('click', function() {
+            // Chart fullscreen handled by charts.js
+        });
+    }
+    
+    // ⭐ NEW: View Git storage button
+    const viewStorageBtn = document.getElementById('viewStorageBtn');
+    if (viewStorageBtn) {
+        viewStorageBtn.addEventListener('click', function() {
+            window.open('https://github.com/gicheha-ai/m/tree/main/data', '_blank');
+            showToast('Opening Git repository...', 'info');
         });
     }
 }
@@ -86,11 +121,6 @@ function fetchTradingState() {
             updateDashboard(data);
             updateSystemStatus('Active', 'success');
             lastUpdateTime = new Date();
-            
-            // Update storage indicator
-            if (data.google_sheets_status) {
-                updateStorageIndicator(data.google_sheets_status);
-            }
         })
         .catch(error => {
             console.error('Error fetching trading state:', error);
@@ -110,14 +140,26 @@ function fetchTradeHistory() {
         })
         .then(data => {
             updateTradeHistory(data);
-            
-            // Update storage status
-            if (data.google_sheets_status) {
-                updateStorageIndicator(data.google_sheets_status);
-            }
         })
         .catch(error => {
             console.error('Error fetching trade history:', error);
+        });
+}
+
+// ⭐ NEW: Fetch storage status from API
+function fetchStorageStatus() {
+    fetch('/api/storage_status')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            updateStorageStatus(data);
+        })
+        .catch(error => {
+            console.error('Error fetching storage status:', error);
         });
 }
 
@@ -154,6 +196,18 @@ function updateDashboard(data) {
             data.api_status === 'DEMO' ? 'bg-warning' :
             'bg-danger'
         }`;
+    }
+    
+    // ⭐ NEW: Update data storage status
+    const dataStorage = document.getElementById('dataStorage');
+    if (dataStorage) {
+        const storageType = data.data_storage || 'GIT_REPO';
+        dataStorage.innerHTML = `
+            <span class="badge ${storageType.includes('READY') ? 'bg-success' : 'bg-warning'}">
+                <i class="bi ${storageType.includes('GIT') ? 'bi-git' : 'bi-hdd'}"></i>
+                ${storageType.includes('GIT') ? 'Git Repository' : storageType}
+            </span>
+        `;
     }
     
     // Update signal strength
@@ -207,25 +261,6 @@ function updateDashboard(data) {
         mlReady.className = `badge ${data.ml_model_ready ? 'bg-success' : 'bg-warning'}`;
     }
     
-    // Update storage status
-    const storageStatus = document.getElementById('storageStatus');
-    if (storageStatus) {
-        const status = data.google_sheets_status || 'UNKNOWN';
-        let badgeClass = 'bg-warning';
-        let displayText = 'Checking...';
-        
-        if (status.includes('CONNECTED')) {
-            badgeClass = 'bg-success';
-            displayText = 'Google Sheets ✓';
-        } else if (status.includes('ERROR')) {
-            badgeClass = 'bg-danger';
-            displayText = 'Storage Error';
-        }
-        
-        storageStatus.textContent = displayText;
-        storageStatus.className = `badge ${badgeClass}`;
-    }
-    
     // Update TP/SL levels
     updateElementText('optimalTp', data.optimal_tp ? data.optimal_tp.toFixed(5) : '-');
     updateElementText('optimalSl', data.optimal_sl ? data.optimal_sl.toFixed(5) : '-');
@@ -253,9 +288,82 @@ function updateDashboard(data) {
     if (data.price_history && Array.isArray(data.price_history)) {
         updatePriceHistory(data.price_history);
     }
+    
+    // Update trade status
+    updateElementText('tradeStatus', data.trade_status || 'NO_TRADE');
+    
+    // ⭐ NEW: Update Git repo info
+    if (data.git_repo_url) {
+        updateElementText('gitRepoLink', `
+            <a href="${data.git_repo_url}" target="_blank" class="text-decoration-none">
+                <span class="badge bg-dark">
+                    <i class="bi bi-github"></i> View on GitHub
+                </span>
+            </a>
+        `);
+    }
 }
 
-// Update active trade display
+// ⭐ NEW: Update storage status display
+function updateStorageStatus(data) {
+    if (!data) return;
+    
+    const storageInfo = document.getElementById('storageInfo');
+    if (storageInfo) {
+        let filesHtml = '';
+        if (data.files) {
+            for (const [fileName, fileInfo] of Object.entries(data.files)) {
+                if (fileInfo.exists) {
+                    filesHtml += `
+                        <div class="small text-muted">
+                            <i class="bi bi-file-earmark-text"></i> ${fileName}: ${fileInfo.size_human}
+                        </div>
+                    `;
+                }
+            }
+        }
+        
+        storageInfo.innerHTML = `
+            <div class="card bg-dark border-secondary">
+                <div class="card-header py-2 bg-transparent border-secondary">
+                    <h6 class="mb-0">
+                        <i class="bi bi-database"></i> Git Storage Status
+                    </h6>
+                </div>
+                <div class="card-body py-2">
+                    <div class="row">
+                        <div class="col-6">
+                            <div class="small">Storage Type:</div>
+                            <div class="fw-bold">${data.data_storage || 'Git Repository'}</div>
+                        </div>
+                        <div class="col-6">
+                            <div class="small">Trade Count:</div>
+                            <div class="fw-bold">${data.trade_count || 0}</div>
+                        </div>
+                    </div>
+                    <div class="row mt-2">
+                        <div class="col-6">
+                            <div class="small">Training Samples:</div>
+                            <div class="fw-bold">${data.training_samples || 0}</div>
+                        </div>
+                        <div class="col-6">
+                            <div class="small">Data Directory:</div>
+                            <div class="fw-bold">${data.data_directory || 'data/'}</div>
+                        </div>
+                    </div>
+                    ${filesHtml ? `
+                    <div class="mt-2 pt-2 border-top border-secondary">
+                        <div class="small mb-1">Files:</div>
+                        ${filesHtml}
+                    </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+    }
+}
+
+// Update active trade display (adjusted for 120 seconds)
 function updateActiveTrade(trade) {
     const activeTradeDiv = document.getElementById('activeTrade');
     
@@ -273,24 +381,37 @@ function updateActiveTrade(trade) {
     const profitPips = trade.profit_pips || 0;
     const duration = trade.duration_seconds || 0;
     const timeRemaining = Math.max(0, CYCLE_DURATION - duration);
+    const profitPercent = trade.profit_amount ? ((trade.profit_amount / trade.trade_size) * 100).toFixed(3) : '0.000';
     
-    // Calculate progress percentage
+    // Calculate progress percentage (based on 120 seconds)
     const progressPercent = Math.min(100, (duration / CYCLE_DURATION) * 100);
+    
+    // ⭐ NEW: Show Git storage info in active trade
+    const gitStorageInfo = trade.data_stored_in ? `
+        <div class="small text-info mt-2">
+            <i class="bi bi-git"></i> Stored in: ${trade.data_stored_in}
+        </div>
+    ` : '';
     
     activeTradeDiv.innerHTML = `
         <div class="text-center">
             <h5 class="${trade.action === 'BUY' ? 'text-success' : 'text-danger'}">
                 <i class="bi ${trade.action === 'BUY' ? 'bi-arrow-up-circle' : 'bi-arrow-down-circle'}"></i>
-                ${trade.action} #${trade.trade_id || trade.id}
+                ${trade.action} #${trade.id}
             </h5>
             
             <div class="row text-start mt-3">
                 <div class="col-6"><small>Entry Price:</small></div>
-                <div class="col-6 text-end"><strong>${trade.entry_price ? trade.entry_price.toFixed(5) : '0.00000'}</strong></div>
+                <div class="col-6 text-end"><strong>${trade.entry_price.toFixed(5)}</strong></div>
                 
                 <div class="col-6"><small>Current P/L:</small></div>
                 <div class="col-6 text-end ${profitPips >= 0 ? 'text-success' : 'text-danger'}">
                     <strong>${profitPips.toFixed(1)} pips</strong>
+                </div>
+                
+                <div class="col-6"><small>P/L %:</small></div>
+                <div class="col-6 text-end ${profitPips >= 0 ? 'text-success' : 'text-danger'}">
+                    <strong>${profitPercent}%</strong>
                 </div>
                 
                 <div class="col-6"><small>Duration:</small></div>
@@ -318,24 +439,30 @@ function updateActiveTrade(trade) {
             
             <div class="mt-3">
                 <small class="text-muted">
-                    <i class="bi bi-cloud-check"></i>
-                    Data saved to Google Sheets
+                    <i class="bi bi-info-circle"></i>
+                    Target: TP at ${trade.optimal_tp.toFixed(5)} (${trade.tp_distance_pips} pips) | 
+                    Max Loss: SL at ${trade.optimal_sl.toFixed(5)} (${trade.sl_distance_pips} pips)
                 </small>
             </div>
+            
+            ${gitStorageInfo}
         </div>
     `;
 }
 
-// Update trade history table
+// Update trade history table with Git storage info
 function updateTradeHistory(data) {
     const tbody = document.getElementById('tradeHistory');
     
     if (!data || !data.trades || data.trades.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="10" class="text-center py-4">
+                <td colspan="11" class="text-center py-4">
                     <i class="bi bi-inbox display-6 d-block text-muted mb-2"></i>
-                    <span class="text-muted">No trades in Google Sheets yet</span>
+                    <span class="text-muted">No trades yet</span>
+                    ${data && data.data_source === 'Git Repository' ? 
+                        '<div class="small text-info mt-2"><i class="bi bi-git"></i> All trades stored in Git repository</div>' : 
+                        ''}
                 </td>
             </tr>
         `;
@@ -347,21 +474,31 @@ function updateTradeHistory(data) {
     
     // Update summary counts
     const totalTrades = data.total || data.trades.length;
-    const profitableTrades = data.profitable || data.trades.filter(t => 
-        t.result && (t.result === 'SUCCESS' || t.result === 'WIN')
-    ).length;
+    const profitableTrades = data.profitable || data.trades.filter(t => t.result === 'SUCCESS').length;
     
     updateElementText('totalHistoryTrades', totalTrades);
     updateElementText('totalWins', profitableTrades);
     
+    // Update Git storage info
+    const gitRepoInfo = document.getElementById('gitRepoInfo');
+    if (gitRepoInfo && data.git_repo) {
+        gitRepoInfo.innerHTML = `
+            <div class="small text-info">
+                <i class="bi bi-git"></i> 
+                <a href="${data.git_repo}" target="_blank" class="text-decoration-none text-info">
+                    All trades stored in Git repository
+                </a>
+                <span class="text-muted"> | File: ${data.storage_file || 'data/trades.json'}</span>
+            </div>
+        `;
+    }
+    
     // Build table rows
     let html = '';
     data.trades.slice().reverse().forEach(trade => {
-        const timestamp = trade.timestamp || trade.entry_time || new Date().toISOString();
-        const entryTime = new Date(timestamp);
+        const entryTime = trade.entry_time ? new Date(trade.entry_time) : new Date();
         const exitTime = trade.exit_time ? new Date(trade.exit_time) : null;
-        const duration = trade.duration_seconds || 
-                        (exitTime ? Math.round((exitTime - entryTime) / 1000) : 0);
+        const duration = exitTime ? Math.round((exitTime - entryTime) / 1000) : 0;
         const profitPips = trade.profit_pips || 0;
         const confidence = trade.confidence || 0;
         
@@ -372,9 +509,9 @@ function updateTradeHistory(data) {
         let resultClass = 'bg-secondary';
         let resultText = trade.result || 'PENDING';
         
-        if (trade.result === 'SUCCESS' || trade.result === 'WIN') {
+        if (trade.result === 'SUCCESS') {
             resultClass = 'bg-success';
-        } else if (trade.result === 'FAILED' || trade.result === 'LOSE') {
+        } else if (trade.result === 'FAILED') {
             resultClass = 'bg-danger';
         } else if (trade.result === 'PARTIAL_SUCCESS') {
             resultClass = 'bg-info';
@@ -384,25 +521,30 @@ function updateTradeHistory(data) {
             resultClass = 'bg-secondary';
         }
         
+        // ⭐ NEW: Git icon for stored trades
+        const gitIcon = trade.data_stored_in ? 
+            '<i class="bi bi-check-circle text-success" title="Stored in Git"></i>' : 
+            '';
+        
         html += `
             <tr>
-                <td><strong>#${trade.trade_id || trade.id}</strong></td>
+                <td><strong>#${trade.id}</strong> ${gitIcon}</td>
                 <td>${timeStr}</td>
                 <td>
                     <span class="badge ${trade.action === 'BUY' ? 'bg-success' : 'bg-danger'}">
                         ${trade.action}
                     </span>
                 </td>
-                <td>${trade.entry_price ? trade.entry_price.toFixed(5) : '0.00000'}</td>
+                <td>${trade.entry_price.toFixed(5)}</td>
                 <td>
-                    <small class="d-block">TP: ${trade.tp_distance_pips || '0'} pips</small>
-                    <small>SL: ${trade.sl_distance_pips || '0'} pips</small>
+                    <small class="d-block">TP: ${trade.optimal_tp ? trade.optimal_tp.toFixed(5) : '-'}</small>
+                    <small>SL: ${trade.optimal_sl ? trade.optimal_sl.toFixed(5) : '-'}</small>
                 </td>
                 <td>${trade.exit_price ? trade.exit_price.toFixed(5) : '-'}</td>
                 <td class="${profitPips >= 0 ? 'text-success' : 'text-danger'} fw-bold">
                     ${profitPips.toFixed(1)}
                 </td>
-                <td>${duration.toFixed(1)}s</td>
+                <td>${duration}s</td>
                 <td>
                     <span class="badge ${resultClass}">
                         ${resultText}
@@ -416,6 +558,13 @@ function updateTradeHistory(data) {
                     </div>
                     <small>${confidence.toFixed(0)}%</small>
                 </td>
+                <td>
+                    ${trade.signal_strength ? 
+                        `<span class="badge ${trade.signal_strength === 3 ? 'bg-success' : trade.signal_strength === 2 ? 'bg-warning' : 'bg-secondary'}">
+                            ${trade.signal_strength}/3
+                        </span>` : 
+                        '-'}
+                </td>
             </tr>
         `;
     });
@@ -423,24 +572,7 @@ function updateTradeHistory(data) {
     tbody.innerHTML = html;
 }
 
-// Update storage indicator
-function updateStorageIndicator(status) {
-    const storageIndicator = document.getElementById('storageIndicator');
-    if (!storageIndicator) return;
-    
-    if (status && status.includes('CONNECTED')) {
-        storageIndicator.className = 'badge bg-success';
-        storageIndicator.textContent = 'Google Sheets ✓';
-    } else if (status && status.includes('ERROR')) {
-        storageIndicator.className = 'badge bg-danger';
-        storageIndicator.textContent = 'Storage Error';
-    } else {
-        storageIndicator.className = 'badge bg-warning';
-        storageIndicator.textContent = 'Storage: Connecting...';
-    }
-}
-
-// Reset trading statistics
+// Reset trading statistics (now includes Git storage)
 function resetTrading() {
     fetch('/api/reset_trading', {
         method: 'POST',
@@ -456,9 +588,10 @@ function resetTrading() {
     })
     .then(data => {
         if (data.success) {
-            showToast('Trading statistics reset (Google Sheets preserved)', 'success');
+            showToast('Trading statistics reset successfully!', 'success');
             fetchTradingState();
             fetchTradeHistory();
+            fetchStorageStatus(); // ⭐ NEW: Refresh storage status
         } else {
             showToast('Failed to reset trading', 'error');
         }
@@ -481,7 +614,7 @@ function startAutoRefresh() {
         }
     }, REFRESH_INTERVAL);
     
-    // Separate timer for history
+    // Separate timer for history (less frequent)
     if (historyTimer) {
         clearInterval(historyTimer);
     }
@@ -492,8 +625,15 @@ function startAutoRefresh() {
         }
     }, HISTORY_REFRESH_INTERVAL);
     
+    // ⭐ NEW: Separate timer for storage status (every 10 seconds)
+    const storageTimer = setInterval(() => {
+        if (isAutoRefreshEnabled) {
+            fetchStorageStatus();
+        }
+    }, 10000);
+    
     updateAutoRefreshStatus(true);
-    console.log('Auto-refresh started');
+    console.log('Auto-refresh started (Git Storage)');
 }
 
 // Stop auto-refresh
@@ -510,6 +650,19 @@ function stopAutoRefresh() {
     
     updateAutoRefreshStatus(false);
     console.log('Auto-refresh stopped');
+}
+
+// Toggle auto-refresh
+function toggleAutoRefresh() {
+    isAutoRefreshEnabled = !isAutoRefreshEnabled;
+    
+    if (isAutoRefreshEnabled) {
+        startAutoRefresh();
+        showToast('Auto-refresh enabled', 'info');
+    } else {
+        stopAutoRefresh();
+        showToast('Auto-refresh disabled', 'warning');
+    }
 }
 
 // Helper function to update element text
@@ -577,7 +730,16 @@ function updateAutoRefreshStatus(enabled) {
     }
 }
 
-// Show toast notification
+// ⭐ NEW: Update Git storage button status
+function updateGitStorageStatus(ready) {
+    const element = document.getElementById('gitStorageStatus');
+    if (element) {
+        element.textContent = ready ? 'Connected' : 'Not Ready';
+        element.className = `badge ${ready ? 'bg-success' : 'bg-warning'}`;
+    }
+}
+
+// Show toast notification with Git storage info
 function showToast(message, type = 'info') {
     // Create toast container if it doesn't exist
     let toastContainer = document.getElementById('toastContainer');
@@ -588,12 +750,17 @@ function showToast(message, type = 'info') {
         document.body.appendChild(toastContainer);
     }
     
+    // Add Git storage icon for storage-related messages
+    const gitIcon = message.includes('Git') || message.includes('storage') || message.includes('repository') ? 
+        '<i class="bi bi-git me-1"></i>' : '';
+    
     // Create toast element
     const toastId = 'toast-' + Date.now();
     const toastHtml = `
         <div id="${toastId}" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
             <div class="toast-header bg-${type} text-white">
                 <strong class="me-auto">
+                    ${gitIcon}
                     <i class="bi ${
                         type === 'success' ? 'bi-check-circle' :
                         type === 'error' ? 'bi-exclamation-circle' :
@@ -635,4 +802,13 @@ window.addEventListener('beforeunload', function() {
     }
 });
 
-console.log('Main.js loaded successfully (2-Minute Cycle, Google Sheets)');
+// Export functions for debugging
+window.fetchTradingState = fetchTradingState;
+window.fetchTradeHistory = fetchTradeHistory;
+window.fetchStorageStatus = fetchStorageStatus; // ⭐ NEW
+window.resetTrading = resetTrading;
+window.startAutoRefresh = startAutoRefresh;
+window.stopAutoRefresh = stopAutoRefresh;
+window.toggleAutoRefresh = toggleAutoRefresh;
+
+console.log('Main.js loaded successfully (2-Minute Cycle with Git Storage)');
