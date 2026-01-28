@@ -12,6 +12,7 @@ const CYCLE_DURATION = 120; // ⭐ FIXED: 120 seconds for 2 minutes
 // State
 let refreshTimer = null;
 let historyTimer = null;
+let storageTimer = null;
 let lastUpdateTime = null;
 let isAutoRefreshEnabled = true;
 
@@ -22,13 +23,13 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initialize systems
     initializeDashboard();
     
+    // Set up event listeners FIRST
+    setupEventListeners();
+    
     // Load initial data
     fetchTradingState();
     fetchTradeHistory();
-    fetchStorageStatus(); // ⭐ NEW: Check Git storage status
-    
-    // Set up event listeners
-    setupEventListeners();
+    fetchStorageStatus();
     
     // Start auto-refresh
     startAutoRefresh();
@@ -61,13 +62,16 @@ function initializeDashboard() {
 
 // Set up all event listeners
 function setupEventListeners() {
+    console.log('Setting up event listeners...');
+    
     // Refresh button
     const refreshBtn = document.getElementById('refreshBtn');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', function() {
+            console.log('Manual refresh triggered');
             fetchTradingState();
             fetchTradeHistory();
-            fetchStorageStatus(); // ⭐ NEW: Refresh storage status
+            fetchStorageStatus();
             showToast('Data refreshed manually', 'info');
         });
     }
@@ -82,10 +86,19 @@ function setupEventListeners() {
         });
     }
     
-    // Toggle auto-refresh
-    const autoRefreshToggle = document.getElementById('autoRefreshToggle');
-    if (autoRefreshToggle) {
-        autoRefreshToggle.addEventListener('click', function() {
+    // View Git storage button
+    const viewStorageBtn = document.getElementById('viewStorageBtn');
+    if (viewStorageBtn) {
+        viewStorageBtn.addEventListener('click', function() {
+            window.open('https://github.com/gicheha-ai/m/tree/main/data', '_blank');
+            showToast('Opening Git repository...', 'info');
+        });
+    }
+    
+    // Auto-refresh toggle button
+    const toggleRefreshBtn = document.getElementById('toggleRefresh');
+    if (toggleRefreshBtn) {
+        toggleRefreshBtn.addEventListener('click', function() {
             toggleAutoRefresh();
         });
     }
@@ -97,19 +110,12 @@ function setupEventListeners() {
             // Chart fullscreen handled by charts.js
         });
     }
-    
-    // ⭐ NEW: View Git storage button
-    const viewStorageBtn = document.getElementById('viewStorageBtn');
-    if (viewStorageBtn) {
-        viewStorageBtn.addEventListener('click', function() {
-            window.open('https://github.com/gicheha-ai/m/tree/main/data', '_blank');
-            showToast('Opening Git repository...', 'info');
-        });
-    }
 }
 
 // Fetch current trading state from API
 function fetchTradingState() {
+    console.log('Fetching trading state...');
+    
     fetch('/api/trading_state')
         .then(response => {
             if (!response.ok) {
@@ -118,6 +124,7 @@ function fetchTradingState() {
             return response.json();
         })
         .then(data => {
+            console.log('Trading state received:', data);
             updateDashboard(data);
             updateSystemStatus('Active', 'success');
             lastUpdateTime = new Date();
@@ -139,6 +146,7 @@ function fetchTradeHistory() {
             return response.json();
         })
         .then(data => {
+            console.log('Trade history received:', data.trades ? data.trades.length : 0, 'trades');
             updateTradeHistory(data);
         })
         .catch(error => {
@@ -146,7 +154,7 @@ function fetchTradeHistory() {
         });
 }
 
-// ⭐ NEW: Fetch storage status from API
+// Fetch storage status from API
 function fetchStorageStatus() {
     fetch('/api/storage_status')
         .then(response => {
@@ -156,6 +164,7 @@ function fetchStorageStatus() {
             return response.json();
         })
         .then(data => {
+            console.log('Storage status received:', data);
             updateStorageStatus(data);
         })
         .catch(error => {
@@ -165,7 +174,12 @@ function fetchStorageStatus() {
 
 // Update dashboard with new data
 function updateDashboard(data) {
-    if (!data) return;
+    if (!data) {
+        console.error('No data received for dashboard update');
+        return;
+    }
+    
+    console.log('Updating dashboard with data');
     
     // Update cycle information
     updateElementText('cycleCount', data.cycle_count || 0);
@@ -193,12 +207,14 @@ function updateDashboard(data) {
         apiStatus.textContent = data.api_status || 'UNKNOWN';
         apiStatus.className = `badge ${
             data.api_status === 'CONNECTED' ? 'bg-success' :
-            data.api_status === 'DEMO' ? 'bg-warning' :
+            data.api_status === 'CACHED' ? 'bg-warning' :
+            data.api_status === 'STALE_CACHE' ? 'bg-warning' :
+            data.api_status === 'SIMULATION' ? 'bg-secondary' :
             'bg-danger'
         }`;
     }
     
-    // ⭐ NEW: Update data storage status
+    // Update data storage status
     const dataStorage = document.getElementById('dataStorage');
     if (dataStorage) {
         const storageType = data.data_storage || 'GIT_REPO';
@@ -225,10 +241,11 @@ function updateDashboard(data) {
     // Update prediction
     const prediction = document.getElementById('prediction');
     if (prediction) {
-        prediction.textContent = data.minute_prediction || 'ANALYZING';
+        const pred = data.minute_prediction || 'ANALYZING';
+        prediction.textContent = pred;
         prediction.className = `display-6 fw-bold ${
-            data.minute_prediction === 'BULLISH' ? 'buy-signal' :
-            data.minute_prediction === 'BEARISH' ? 'sell-signal' :
+            pred === 'BULLISH' ? 'buy-signal' :
+            pred === 'BEARISH' ? 'sell-signal' :
             'wait-signal'
         }`;
     }
@@ -241,10 +258,11 @@ function updateDashboard(data) {
     // Update action
     const action = document.getElementById('action');
     if (action) {
-        action.textContent = data.action || 'WAIT';
+        const act = data.action || 'WAIT';
+        action.textContent = act;
         action.className = `badge ${
-            data.action === 'BUY' ? 'bg-success fs-5 p-2' :
-            data.action === 'SELL' ? 'bg-danger fs-5 p-2' :
+            act === 'BUY' ? 'bg-success fs-5 p-2' :
+            act === 'SELL' ? 'bg-danger fs-5 p-2' :
             'bg-secondary fs-5 p-2'
         }`;
     }
@@ -279,20 +297,10 @@ function updateDashboard(data) {
     // Update active trade
     updateActiveTrade(data.current_trade);
     
-    // Update chart if available
-    if (typeof updateChartFromState === 'function' && data.chart_data) {
-        updateChartFromState(data);
-    }
-    
-    // Update price history if available
-    if (data.price_history && Array.isArray(data.price_history)) {
-        updatePriceHistory(data.price_history);
-    }
-    
     // Update trade status
     updateElementText('tradeStatus', data.trade_status || 'NO_TRADE');
     
-    // ⭐ NEW: Update Git repo info
+    // Update Git repo info
     if (data.git_repo_url) {
         updateElementText('gitRepoLink', `
             <a href="${data.git_repo_url}" target="_blank" class="text-decoration-none">
@@ -302,68 +310,19 @@ function updateDashboard(data) {
             </a>
         `);
     }
-}
-
-// ⭐ NEW: Update storage status display
-function updateStorageStatus(data) {
-    if (!data) return;
     
-    const storageInfo = document.getElementById('storageInfo');
-    if (storageInfo) {
-        let filesHtml = '';
-        if (data.files) {
-            for (const [fileName, fileInfo] of Object.entries(data.files)) {
-                if (fileInfo.exists) {
-                    filesHtml += `
-                        <div class="small text-muted">
-                            <i class="bi bi-file-earmark-text"></i> ${fileName}: ${fileInfo.size_human}
-                        </div>
-                    `;
-                }
-            }
-        }
-        
-        storageInfo.innerHTML = `
-            <div class="card bg-dark border-secondary">
-                <div class="card-header py-2 bg-transparent border-secondary">
-                    <h6 class="mb-0">
-                        <i class="bi bi-database"></i> Git Storage Status
-                    </h6>
-                </div>
-                <div class="card-body py-2">
-                    <div class="row">
-                        <div class="col-6">
-                            <div class="small">Storage Type:</div>
-                            <div class="fw-bold">${data.data_storage || 'Git Repository'}</div>
-                        </div>
-                        <div class="col-6">
-                            <div class="small">Trade Count:</div>
-                            <div class="fw-bold">${data.trade_count || 0}</div>
-                        </div>
-                    </div>
-                    <div class="row mt-2">
-                        <div class="col-6">
-                            <div class="small">Training Samples:</div>
-                            <div class="fw-bold">${data.training_samples || 0}</div>
-                        </div>
-                        <div class="col-6">
-                            <div class="small">Data Directory:</div>
-                            <div class="fw-bold">${data.data_directory || 'data/'}</div>
-                        </div>
-                    </div>
-                    ${filesHtml ? `
-                    <div class="mt-2 pt-2 border-top border-secondary">
-                        <div class="small mb-1">Files:</div>
-                        ${filesHtml}
-                    </div>
-                    ` : ''}
-                </div>
-            </div>
-        `;
+    // Update chart if available
+    if (typeof updateChartFromState === 'function') {
+        updateChartFromState(data);
+    }
+    
+    // Update price history if available
+    if (typeof updatePriceHistory === 'function' && data.price_history && Array.isArray(data.price_history)) {
+        updatePriceHistory(data.price_history);
     }
 }
 
-// Update active trade display (adjusted for 120 seconds)
+// Update active trade display
 function updateActiveTrade(trade) {
     const activeTradeDiv = document.getElementById('activeTrade');
     
@@ -385,13 +344,6 @@ function updateActiveTrade(trade) {
     
     // Calculate progress percentage (based on 120 seconds)
     const progressPercent = Math.min(100, (duration / CYCLE_DURATION) * 100);
-    
-    // ⭐ NEW: Show Git storage info in active trade
-    const gitStorageInfo = trade.data_stored_in ? `
-        <div class="small text-info mt-2">
-            <i class="bi bi-git"></i> Stored in: ${trade.data_stored_in}
-        </div>
-    ` : '';
     
     activeTradeDiv.innerHTML = `
         <div class="text-center">
@@ -445,12 +397,16 @@ function updateActiveTrade(trade) {
                 </small>
             </div>
             
-            ${gitStorageInfo}
+            ${trade.data_stored_in ? `
+            <div class="small text-info mt-2">
+                <i class="bi bi-git"></i> Stored in Git repository
+            </div>
+            ` : ''}
         </div>
     `;
 }
 
-// Update trade history table with Git storage info
+// Update trade history table
 function updateTradeHistory(data) {
     const tbody = document.getElementById('tradeHistory');
     
@@ -478,20 +434,6 @@ function updateTradeHistory(data) {
     
     updateElementText('totalHistoryTrades', totalTrades);
     updateElementText('totalWins', profitableTrades);
-    
-    // Update Git storage info
-    const gitRepoInfo = document.getElementById('gitRepoInfo');
-    if (gitRepoInfo && data.git_repo) {
-        gitRepoInfo.innerHTML = `
-            <div class="small text-info">
-                <i class="bi bi-git"></i> 
-                <a href="${data.git_repo}" target="_blank" class="text-decoration-none text-info">
-                    All trades stored in Git repository
-                </a>
-                <span class="text-muted"> | File: ${data.storage_file || 'data/trades.json'}</span>
-            </div>
-        `;
-    }
     
     // Build table rows
     let html = '';
@@ -521,14 +463,9 @@ function updateTradeHistory(data) {
             resultClass = 'bg-secondary';
         }
         
-        // ⭐ NEW: Git icon for stored trades
-        const gitIcon = trade.data_stored_in ? 
-            '<i class="bi bi-check-circle text-success" title="Stored in Git"></i>' : 
-            '';
-        
         html += `
             <tr>
-                <td><strong>#${trade.id}</strong> ${gitIcon}</td>
+                <td><strong>#${trade.id}</strong></td>
                 <td>${timeStr}</td>
                 <td>
                     <span class="badge ${trade.action === 'BUY' ? 'bg-success' : 'bg-danger'}">
@@ -572,7 +509,61 @@ function updateTradeHistory(data) {
     tbody.innerHTML = html;
 }
 
-// Reset trading statistics (now includes Git storage)
+// Update storage status display
+function updateStorageStatus(data) {
+    if (!data) return;
+    
+    const storageInfo = document.getElementById('storageInfo');
+    if (storageInfo) {
+        let filesHtml = '';
+        if (data.files) {
+            for (const [fileName, fileInfo] of Object.entries(data.files)) {
+                if (fileInfo.exists) {
+                    filesHtml += `
+                        <div class="small text-muted">
+                            <i class="bi bi-file-earmark-text"></i> ${fileName}: ${fileInfo.size_human}
+                        </div>
+                    `;
+                }
+            }
+        }
+        
+        storageInfo.innerHTML = `
+            <div class="text-center">
+                <i class="bi bi-git display-6 text-info mb-2"></i>
+                <h6 class="mb-2">Git Repository Storage</h6>
+                <div class="small text-muted mb-2">
+                    <i class="bi bi-database"></i> Trade Count: ${data.trade_count || 0}
+                </div>
+                <div class="small text-muted mb-2">
+                    <i class="bi bi-cpu"></i> Training Samples: ${data.training_samples || 0}
+                </div>
+                ${filesHtml ? `
+                <div class="mt-2 pt-2 border-top border-secondary">
+                    <div class="small mb-1">Files:</div>
+                    ${filesHtml}
+                </div>
+                ` : ''}
+                <div class="mt-3">
+                    <button id="viewGitRepo" class="btn btn-sm btn-dark">
+                        <i class="bi bi-github"></i> View Repository
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        // Add event listener for the new button
+        const viewGitRepoBtn = document.getElementById('viewGitRepo');
+        if (viewGitRepoBtn) {
+            viewGitRepoBtn.addEventListener('click', function() {
+                window.open('https://github.com/gicheha-ai/m/tree/main/data', '_blank');
+                showToast('Opening Git repository...', 'info');
+            });
+        }
+    }
+}
+
+// Reset trading statistics
 function resetTrading() {
     fetch('/api/reset_trading', {
         method: 'POST',
@@ -591,7 +582,7 @@ function resetTrading() {
             showToast('Trading statistics reset successfully!', 'success');
             fetchTradingState();
             fetchTradeHistory();
-            fetchStorageStatus(); // ⭐ NEW: Refresh storage status
+            fetchStorageStatus();
         } else {
             showToast('Failed to reset trading', 'error');
         }
@@ -625,15 +616,19 @@ function startAutoRefresh() {
         }
     }, HISTORY_REFRESH_INTERVAL);
     
-    // ⭐ NEW: Separate timer for storage status (every 10 seconds)
-    const storageTimer = setInterval(() => {
+    // Separate timer for storage status (every 10 seconds)
+    if (storageTimer) {
+        clearInterval(storageTimer);
+    }
+    
+    storageTimer = setInterval(() => {
         if (isAutoRefreshEnabled) {
             fetchStorageStatus();
         }
     }, 10000);
     
     updateAutoRefreshStatus(true);
-    console.log('Auto-refresh started (Git Storage)');
+    console.log('Auto-refresh started');
 }
 
 // Stop auto-refresh
@@ -646,6 +641,11 @@ function stopAutoRefresh() {
     if (historyTimer) {
         clearInterval(historyTimer);
         historyTimer = null;
+    }
+    
+    if (storageTimer) {
+        clearInterval(storageTimer);
+        storageTimer = null;
     }
     
     updateAutoRefreshStatus(false);
@@ -662,6 +662,16 @@ function toggleAutoRefresh() {
     } else {
         stopAutoRefresh();
         showToast('Auto-refresh disabled', 'warning');
+    }
+    
+    // Update the toggle button text
+    const toggleBtn = document.getElementById('toggleRefresh');
+    if (toggleBtn) {
+        const statusSpan = toggleBtn.querySelector('span');
+        if (statusSpan) {
+            statusSpan.textContent = isAutoRefreshEnabled ? 'Enabled' : 'Disabled';
+            statusSpan.className = `badge ${isAutoRefreshEnabled ? 'bg-success' : 'bg-secondary'}`;
+        }
     }
 }
 
@@ -728,18 +738,19 @@ function updateAutoRefreshStatus(enabled) {
         element.textContent = enabled ? 'Enabled' : 'Disabled';
         element.className = `badge ${enabled ? 'bg-success' : 'bg-secondary'}`;
     }
-}
-
-// ⭐ NEW: Update Git storage button status
-function updateGitStorageStatus(ready) {
-    const element = document.getElementById('gitStorageStatus');
-    if (element) {
-        element.textContent = ready ? 'Connected' : 'Not Ready';
-        element.className = `badge ${ready ? 'bg-success' : 'bg-warning'}`;
+    
+    // Also update the toggle button if it exists
+    const toggleBtn = document.getElementById('toggleRefresh');
+    if (toggleBtn) {
+        const statusSpan = toggleBtn.querySelector('span');
+        if (statusSpan) {
+            statusSpan.textContent = enabled ? 'Enabled' : 'Disabled';
+            statusSpan.className = `badge ${enabled ? 'bg-success' : 'bg-secondary'}`;
+        }
     }
 }
 
-// Show toast notification with Git storage info
+// Show toast notification
 function showToast(message, type = 'info') {
     // Create toast container if it doesn't exist
     let toastContainer = document.getElementById('toastContainer');
@@ -750,17 +761,12 @@ function showToast(message, type = 'info') {
         document.body.appendChild(toastContainer);
     }
     
-    // Add Git storage icon for storage-related messages
-    const gitIcon = message.includes('Git') || message.includes('storage') || message.includes('repository') ? 
-        '<i class="bi bi-git me-1"></i>' : '';
-    
     // Create toast element
     const toastId = 'toast-' + Date.now();
     const toastHtml = `
         <div id="${toastId}" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
             <div class="toast-header bg-${type} text-white">
                 <strong class="me-auto">
-                    ${gitIcon}
                     <i class="bi ${
                         type === 'success' ? 'bi-check-circle' :
                         type === 'error' ? 'bi-exclamation-circle' :
@@ -805,7 +811,7 @@ window.addEventListener('beforeunload', function() {
 // Export functions for debugging
 window.fetchTradingState = fetchTradingState;
 window.fetchTradeHistory = fetchTradeHistory;
-window.fetchStorageStatus = fetchStorageStatus; // ⭐ NEW
+window.fetchStorageStatus = fetchStorageStatus;
 window.resetTrading = resetTrading;
 window.startAutoRefresh = startAutoRefresh;
 window.stopAutoRefresh = stopAutoRefresh;
