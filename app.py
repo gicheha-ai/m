@@ -105,6 +105,10 @@ tp_labels = []
 sl_labels = []
 ml_trained = False
 
+# Trading bot thread control
+trading_thread = None
+trading_active = True
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -122,6 +126,7 @@ print(f"API Calls/Day: ~240 (SAFE for all free limits)")
 print(f"Data Storage: Google Sheets")
 print(f"Initial Balance: ${INITIAL_BALANCE:,.2f}")
 print(f"Trade Size: ${BASE_TRADE_SIZE:,.2f}")
+print(f"Auto-Trading: ENABLED")
 print("="*80)
 print("Starting system...")
 
@@ -149,7 +154,7 @@ def save_trade_to_google_sheets(trade_data):
             trading_state['google_sheets_status'] = 'CONNECTED'
             return {'success': True, 'data': response.json()}
         else:
-            logger.warning(f"⚠️  SheetDB API error: {response.status_code}")
+            logger.warning(f"⚠️  SheetDB API error: {response.status_code} - {response.text[:100]}")
             trading_state['google_sheets_status'] = f'ERROR: {response.status_code}'
             return {'success': False, 'error': f'API Error {response.status_code}'}
             
@@ -217,7 +222,7 @@ def initialize_google_sheets():
                 
                 # Count profitable trades
                 profitable = sum(1 for t in existing_trades 
-                               if t.get('result') in ['SUCCESS', 'WIN'])
+                               if t.get('result') in ['SUCCESS', 'WIN', 'PARTIAL_SUCCESS'])
                 trading_state['profitable_trades'] = profitable
                 
                 if trading_state['total_trades'] > 0:
@@ -225,6 +230,7 @@ def initialize_google_sheets():
                                                 trading_state['total_trades']) * 100
                 
                 logger.info(f"✅ Loaded {len(existing_trades)} trades from Google Sheets")
+                logger.info(f"✅ Win Rate: {trading_state['win_rate']:.1f}%")
                 trading_state['google_sheets_status'] = 'CONNECTED'
             else:
                 logger.info("✅ Google Sheets connected (no existing trades)")
@@ -413,12 +419,18 @@ def calculate_advanced_indicators(prices):
 
 # ==================== ML TRAINING SYSTEM ====================
 def initialize_training_system():
-    """Initialize ML training data"""
+    """Initialize ML training data from Google Sheets"""
     global ml_features, tp_labels, sl_labels, ml_trained
     
     if trade_history and len(trade_history) >= 10:
         try:
-            for trade in trade_history[-50:]:
+            logger.info(f"Starting ML training with {len(trade_history)} trades...")
+            
+            # Extract features from recent trades for ML
+            for trade in trade_history[-50:]:  # Use last 50 trades
+                if 'confidence' not in trade:
+                    continue
+                    
                 features = [
                     trade.get('confidence', 0) / 100,
                     trade.get('bb_percent_at_entry', 50) / 100,
@@ -429,13 +441,31 @@ def initialize_training_system():
                 ]
                 ml_features.append(features)
                 
+                # Determine optimal TP/SL based on trade result
                 profit = trade.get('profit_pips', 0)
-                tp_labels.append(max(5, min(20, abs(profit) + 5)))
-                sl_labels.append(max(3, min(15, abs(profit) + 3)))
+                result = trade.get('result', '')
+                
+                if result in ['SUCCESS', 'WIN']:
+                    # Successful trade - keep similar distances
+                    optimal_tp = trade.get('tp_distance_pips', 8)
+                    optimal_sl = trade.get('sl_distance_pips', 5)
+                elif result in ['FAILED', 'LOSE']:
+                    # Failed trade - adjust distances
+                    optimal_tp = trade.get('tp_distance_pips', 8) * 0.8  # Reduce TP
+                    optimal_sl = trade.get('sl_distance_pips', 5) * 1.2  # Increase SL
+                else:
+                    # Other results - moderate adjustment
+                    optimal_tp = trade.get('tp_distance_pips', 8) * 0.9
+                    optimal_sl = trade.get('sl_distance_pips', 5) * 1.1
+                
+                tp_labels.append(max(5, min(20, optimal_tp)))
+                sl_labels.append(max(3, min(15, optimal_sl)))
             
             if len(ml_features) >= 10:
                 train_ml_models()
                 logger.info(f"✅ ML system initialized with {len(ml_features)} samples")
+            else:
+                logger.info(f"⚠️  {len(ml_features)} samples - collecting more data")
                 
         except Exception as e:
             logger.error(f"Error initializing ML: {e}")
@@ -668,6 +698,11 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
     
     trade_id = len(trade_history) + 1
     
+    # Get current indicator values for ML features
+    price_series = create_price_series(current_price, 120)
+    df_indicators = calculate_advanced_indicators(price_series)
+    latest = df_indicators.iloc[-1]
+    
     trade = {
         'trade_id': trade_id,
         'timestamp': datetime.now().isoformat(),
@@ -680,16 +715,17 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
         'cycle_number': trading_state['cycle_count'],
         'confidence': float(confidence),
         'signal_strength': signal_strength,
-        'bb_percent_at_entry': 50.0,
-        'rsi_at_entry': 50.0,
-        'macd_hist_at_entry': 0.0,
-        'volatility_at_entry': 0.0005,
+        'bb_percent_at_entry': float(latest.get('bb_percent', 50)),
+        'rsi_at_entry': float(latest.get('rsi', 50)),
+        'macd_hist_at_entry': float(latest.get('macd_hist', 0)),
+        'volatility_at_entry': float(latest.get('atr', 0.0005)),
         'sl_distance_pips': sl_pips,
         'tp_distance_pips': tp_pips,
         'optimal_tp': float(optimal_tp),
         'optimal_sl': float(optimal_sl),
         'trade_size': BASE_TRADE_SIZE,
-        'status': 'OPEN'
+        'status': 'OPEN',
+        'reason': action_reason
     }
     
     trading_state['current_trade'] = trade
@@ -701,8 +737,8 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
     trading_state['trade_status'] = 'ACTIVE'
     trading_state['signal_strength'] = signal_strength
     
-    # Save to Google Sheets
-    save_trade_to_google_sheets(trade)
+    # Save to Google Sheets immediately
+    save_result = save_trade_to_google_sheets(trade)
     
     logger.info(f"🔔 {action} ORDER EXECUTED")
     logger.info(f"   Trade ID: {trade_id}")
@@ -710,6 +746,7 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
     logger.info(f"   Take Profit: {optimal_tp:.5f} ({tp_pips} pips)")
     logger.info(f"   Stop Loss: {optimal_sl:.5f} ({sl_pips} pips)")
     logger.info(f"   Confidence: {confidence:.1f}%")
+    logger.info(f"   Google Sheets: {'Saved' if save_result.get('success') else 'Failed'}")
     logger.info(f"   Goal: Hit TP ({tp_pips} pips) before SL ({sl_pips} pips) in {CYCLE_SECONDS} seconds")
     
     return trade
@@ -813,9 +850,51 @@ def monitor_active_trade(current_price):
         trading_state['trade_progress'] = 0
         trading_state['remaining_time'] = CYCLE_SECONDS
         
+        # Add to ML training data
+        add_trade_to_ml_training(trade)
+        
         return trade
     
     return trade
+
+def add_trade_to_ml_training(trade):
+    """Add completed trade to ML training data"""
+    try:
+        # Extract features from trade
+        features = [
+            trade.get('confidence', 0) / 100,
+            trade.get('bb_percent_at_entry', 50) / 100,
+            trade.get('rsi_at_entry', 50) / 100,
+            trade.get('macd_hist_at_entry', 0) * 10000,
+            1 if trade.get('action') == 'BUY' else 0,
+            trade.get('signal_strength', 0) / 3
+        ]
+        
+        # Determine optimal TP/SL based on result
+        profit = trade.get('profit_pips', 0)
+        result = trade.get('result', '')
+        
+        if result in ['SUCCESS', 'WIN']:
+            optimal_tp = trade.get('tp_distance_pips', 8)
+            optimal_sl = trade.get('sl_distance_pips', 5)
+        elif result in ['FAILED', 'LOSE']:
+            optimal_tp = trade.get('tp_distance_pips', 8) * 0.8
+            optimal_sl = trade.get('sl_distance_pips', 5) * 1.2
+        else:
+            optimal_tp = trade.get('tp_distance_pips', 8) * 0.9
+            optimal_sl = trade.get('sl_distance_pips', 5) * 1.1
+        
+        ml_features.append(features)
+        tp_labels.append(max(5, min(20, optimal_tp)))
+        sl_labels.append(max(3, min(15, optimal_sl)))
+        
+        # Retrain ML if we have enough samples
+        if len(ml_features) >= 10 and len(ml_features) % 5 == 0:
+            train_ml_models()
+            logger.info(f"📚 ML retrained with {len(ml_features)} samples")
+        
+    except Exception as e:
+        logger.error(f"Error adding trade to ML training: {e}")
 
 # ==================== CHART CREATION ====================
 def create_trading_chart(prices, current_trade, next_cycle):
@@ -933,7 +1012,7 @@ def create_trading_chart(prices, current_trade, next_cycle):
 # ==================== MAIN 2-MINUTE CYCLE ====================
 def trading_cycle():
     """Main 2-minute trading cycle with caching"""
-    global trading_state
+    global trading_state, trading_active
     
     cycle_count = 0
     
@@ -945,7 +1024,7 @@ def trading_cycle():
     
     logger.info("✅ Trading bot started with 2-minute cycles")
     
-    while True:
+    while trading_active:
         try:
             cycle_count += 1
             cycle_start = datetime.now()
@@ -1054,6 +1133,9 @@ def trading_cycle():
             
             # 14. WAIT FOR NEXT CYCLE
             for i in range(next_cycle_time):
+                if not trading_active:
+                    break
+                    
                 progress_pct = (i / next_cycle_time) * 100
                 trading_state['cycle_progress'] = progress_pct
                 trading_state['remaining_time'] = next_cycle_time - i
@@ -1071,6 +1153,35 @@ def trading_cycle():
             import traceback
             traceback.print_exc()
             time.sleep(60)
+
+# ==================== START/STOP TRADING BOT ====================
+def start_trading_bot():
+    """Start the trading bot in a separate thread"""
+    global trading_thread, trading_active
+    
+    try:
+        trading_active = True
+        trading_thread = threading.Thread(target=trading_cycle, daemon=True)
+        trading_thread.start()
+        logger.info("✅ Trading bot started successfully")
+        print("✅ 2-Minute trading system ACTIVE")
+        print(f"✅ Caching: {CACHE_DURATION}-second cache enabled")
+        print(f"✅ Google Sheets: Connected")
+        print("✅ API Calls/Day: ~240 (SAFE for all free limits)")
+        print("✅ Auto-Trading: ENABLED")
+        print("✅ ML Training: Ready after 10 trades")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Error starting trading bot: {e}")
+        print(f"❌ Error: {e}")
+        return False
+
+def stop_trading_bot():
+    """Stop the trading bot"""
+    global trading_active
+    trading_active = False
+    logger.info("🛑 Trading bot stopped")
+    return True
 
 # ==================== FLASK ROUTES ====================
 @app.route('/')
@@ -1172,29 +1283,28 @@ def health_check():
         'cache_enabled': True,
         'cache_duration': CACHE_DURATION,
         'google_sheets_status': trading_state['google_sheets_status'],
+        'trading_active': trading_active,
+        'ml_ready': trading_state['ml_model_ready'],
+        'total_trades': trading_state['total_trades'],
         'api_calls_per_day': '~240 (SAFE)',
         'version': '2.0-google-sheets'
     })
 
-# ==================== START TRADING BOT ====================
-def start_trading_bot():
-    """Start the trading bot"""
-    try:
-        thread = threading.Thread(target=trading_cycle, daemon=True)
-        thread.start()
-        logger.info("✅ Trading bot started successfully")
-        print("✅ 2-Minute trading system ACTIVE")
-        print(f"✅ Caching: {CACHE_DURATION}-second cache enabled")
-        print(f"✅ Google Sheets: Connected")
-        print("✅ API Calls/Day: ~240 (SAFE for all free limits)")
-        print("✅ ML Training: Ready after 10 trades")
-    except Exception as e:
-        logger.error(f"❌ Error starting trading bot: {e}")
-        print(f"❌ Error: {e}")
+@app.route('/api/start_trading', methods=['POST'])
+def api_start_trading():
+    """API endpoint to start trading"""
+    result = start_trading_bot()
+    return jsonify({'success': result, 'message': 'Trading started'})
+
+@app.route('/api/stop_trading', methods=['POST'])
+def api_stop_trading():
+    """API endpoint to stop trading"""
+    result = stop_trading_bot()
+    return jsonify({'success': result, 'message': 'Trading stopped'})
 
 # ==================== MAIN ENTRY POINT ====================
 if __name__ == '__main__':
-    # Start trading bot
+    # ⭐⭐ CRITICAL: Start trading bot when app starts ⭐⭐
     start_trading_bot()
     
     # Run Flask app
@@ -1205,6 +1315,7 @@ if __name__ == '__main__':
     print(f"• 2-minute cycles with {CACHE_DURATION}-second caching")
     print(f"• Data Storage: Google Sheets")
     print(f"• Auto-trading: ENABLED")
+    print(f"• ML Auto-correction: ENABLED")
     print("="*80)
     
     app.run(
