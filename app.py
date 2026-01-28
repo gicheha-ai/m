@@ -901,14 +901,18 @@ def create_trading_chart(prices, current_trade, next_cycle):
                 font=dict(size=16, color='white')
             ),
             yaxis=dict(
-                title='Price',
-                titlefont=dict(color='white'),
+                title=dict(
+                    text='Price',
+                    font=dict(color='white')
+                ),
                 tickfont=dict(color='white'),
                 gridcolor='rgba(255,255,255,0.1)'
             ),
             xaxis=dict(
-                title='Time (seconds)',
-                titlefont=dict(color='white'),
+                title=dict(
+                    text='Time (seconds)',
+                    font=dict(color='white')
+                ),
                 tickfont=dict(color='white'),
                 gridcolor='rgba(255,255,255,0.1)'
             ),
