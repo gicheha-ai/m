@@ -20,7 +20,7 @@
                         <p class="text-light mb-0">
                             <i class="bi bi-clock"></i> Predictions every 120 seconds • 
                             <i class="bi bi-cpu"></i> ML-Optimized TP/SL • 
-                            <i class="bi bi-google"></i> Google Sheets Data Storage • 
+                            <i class="bi bi-google"></i> Google Sheets Storage • 
                             <i class="bi bi-cash-coin"></i> Real-time Virtual Trading
                         </p>
                     </div>
@@ -125,7 +125,7 @@
             <div class="col-md-3">
                 <div class="card trading-card h-100">
                     <div class="card-header bg-info">
-                        <h5 class="mb-0"><i class="bi bi-bar-chart"></i> System Status</h5>
+                        <h5 class="mb-0"><i class="bi bi-bar-chart"></i> Trading Statistics</h5>
                     </div>
                     <div class="card-body">
                         <div class="row mb-2">
@@ -147,14 +147,14 @@
                             </div>
                         </div>
                         <div class="row mb-2">
-                            <div class="col-6">Storage Status:</div>
+                            <div class="col-6">Storage:</div>
                             <div class="col-6 text-end">
                                 <span id="storageStatus" class="badge bg-success">Google Sheets</span>
                             </div>
                         </div>
                         <div class="row mb-2">
-                            <div class="col-6">Cache Efficiency:</div>
-                            <div class="col-6 text-end" id="cacheEfficiency">0%</div>
+                            <div class="col-6">Remaining Time:</div>
+                            <div class="col-6 text-end" id="remainingTime">120s</div>
                         </div>
                     </div>
                 </div>
@@ -171,7 +171,6 @@
                             <h5 class="mb-0"><i class="bi bi-graph-up"></i> Live Trading Chart (2-Minute View)</h5>
                             <div>
                                 <span class="badge bg-warning me-2" id="chartStatus">Loading...</span>
-                                <span class="badge bg-success me-2" id="sheetsStatus">Google Sheets</span>
                                 <button id="toggleChart" class="btn btn-sm btn-outline-light">
                                     <i class="bi bi-arrows-angle-expand"></i>
                                 </button>
@@ -213,8 +212,8 @@
                                     <span id="tradeProgress" class="fs-4 fw-bold">0%</span>
                                 </div>
                                 <div class="d-inline-block p-3 rounded bg-dark ms-2">
-                                    <small class="text-muted d-block">Remaining Time</small>
-                                    <span id="remainingTime" class="fs-4 fw-bold">120s</span>
+                                    <small class="text-muted d-block">Risk/Reward</small>
+                                    <span id="riskReward" class="fs-4 fw-bold">1:2</span>
                                 </div>
                             </div>
                         </div>
@@ -243,13 +242,10 @@
                             <div class="col-12">
                                 <div class="d-grid gap-2">
                                     <button id="resetBtn" class="btn btn-warning">
-                                        <i class="bi bi-arrow-clockwise"></i> Reset Trading Stats
+                                        <i class="bi bi-arrow-clockwise"></i> Reset Trading
                                     </button>
                                     <button id="refreshBtn" class="btn btn-info">
                                         <i class="bi bi-arrow-repeat"></i> Refresh Now
-                                    </button>
-                                    <button id="checkSheetsBtn" class="btn btn-success">
-                                        <i class="bi bi-google"></i> Check Storage
                                     </button>
                                 </div>
                             </div>
@@ -265,13 +261,10 @@
                 <div class="card trading-card">
                     <div class="card-header">
                         <div class="d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="bi bi-clock-history"></i> Trade History (From Google Sheets)</h5>
+                            <h5 class="mb-0"><i class="bi bi-clock-history"></i> Trade History (Google Sheets)</h5>
                             <div>
                                 <span class="badge bg-dark me-2">Total: <span id="totalHistoryTrades">0</span></span>
                                 <span class="badge bg-success">Wins: <span id="totalWins">0</span></span>
-                                <span class="badge bg-primary ms-2" id="storageBadge">
-                                    <i class="bi bi-google"></i> Sheets
-                                </span>
                             </div>
                         </div>
                     </div>
@@ -295,35 +288,12 @@
                                 <tbody id="tradeHistory">
                                     <tr>
                                         <td colspan="10" class="text-center py-4">
-                                            <i class="bi bi-cloud-arrow-down display-6 d-block text-muted mb-2"></i>
+                                            <i class="bi bi-inbox display-6 d-block text-muted mb-2"></i>
                                             <span class="text-muted">Loading from Google Sheets...</span>
-                                            <div class="spinner-border spinner-border-sm text-primary mt-2" role="status">
-                                                <span class="visually-hidden">Loading...</span>
-                                            </div>
                                         </td>
                                     </tr>
                                 </tbody>
                             </table>
-                        </div>
-                    </div>
-                    <div class="card-footer">
-                        <div class="row">
-                            <div class="col-md-8 text-muted">
-                                <small>
-                                    <i class="bi bi-info-circle"></i> 
-                                    Data permanently stored in Google Sheets • 
-                                    Cycle: <span class="badge bg-primary">120s</span> • 
-                                    Last sync: <span id="lastSync">-</span>
-                                </small>
-                            </div>
-                            <div class="col-md-4 text-end">
-                                <button id="exportBtn" class="btn btn-sm btn-outline-light me-2">
-                                    <i class="bi bi-download"></i> Export CSV
-                                </button>
-                                <button id="syncBtn" class="btn btn-sm btn-outline-info">
-                                    <i class="bi bi-arrow-clockwise"></i> Sync Now
-                                </button>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -340,7 +310,7 @@
                         Storage: <span id="storageIndicator" class="badge bg-success">Google Sheets</span> • 
                         Auto-refresh: <span id="autoRefreshStatus" class="badge bg-info">Enabled</span> • 
                         Cycle: <span class="badge bg-primary">120s</span> • 
-                        Version 2.0 (Google Sheets Edition)
+                        Version 2.0
                     </small>
                 </div>
             </div>
@@ -356,7 +326,7 @@
     <script>
         // Initialize when page loads
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('EUR/USD 2-Minute Trading System (Google Sheets Edition) initialized');
+            console.log('EUR/USD 2-Minute Trading System initialized');
             
             // Set up auto-refresh
             startAutoRefresh();
@@ -367,240 +337,7 @@
             // Initial data fetch
             fetchTradingState();
             fetchTradeHistory();
-            
-            // Update storage indicator
-            updateStorageIndicator();
         });
-
-        // Enhanced event listeners for Google Sheets features
-        function setupEventListeners() {
-            document.getElementById('resetBtn').addEventListener('click', function() {
-                if (confirm('Reset trading statistics? (Google Sheets data will be preserved)')) {
-                    resetTrading();
-                }
-            });
-
-            document.getElementById('refreshBtn').addEventListener('click', function() {
-                fetchTradingState();
-                fetchTradeHistory();
-            });
-
-            document.getElementById('checkSheetsBtn').addEventListener('click', function() {
-                checkGoogleSheetsConnection();
-            });
-
-            document.getElementById('syncBtn').addEventListener('click', function() {
-                fetchTradeHistory();
-                showNotification('Syncing with Google Sheets...', 'info');
-            });
-
-            document.getElementById('exportBtn').addEventListener('click', function() {
-                exportToCSV();
-            });
-
-            // Toggle chart view
-            document.getElementById('toggleChart').addEventListener('click', function() {
-                const chartDiv = document.getElementById('chart');
-                chartDiv.classList.toggle('fullscreen-chart');
-                const icon = this.querySelector('i');
-                icon.classList.toggle('bi-arrows-angle-expand');
-                icon.classList.toggle('bi-arrows-angle-contract');
-            });
-        }
-
-        // New function to check Google Sheets connection
-        function checkGoogleSheetsConnection() {
-            showNotification('Checking Google Sheets connection...', 'info');
-            
-            fetch('/api/health')
-                .then(response => response.json())
-                .then(data => {
-                    const status = data.google_sheets_status || 'UNKNOWN';
-                    let badgeClass = 'bg-warning';
-                    
-                    if (status.includes('CONNECTED')) badgeClass = 'bg-success';
-                    else if (status.includes('ERROR')) badgeClass = 'bg-danger';
-                    
-                    document.getElementById('sheetsStatus').className = `badge ${badgeClass}`;
-                    document.getElementById('sheetsStatus').textContent = `Sheets: ${status}`;
-                    
-                    showNotification(`Google Sheets: ${status}`, 
-                                   status.includes('CONNECTED') ? 'success' : 'warning');
-                })
-                .catch(error => {
-                    console.error('Error checking Google Sheets:', error);
-                    showNotification('Failed to check Google Sheets connection', 'danger');
-                });
-        }
-
-        // New function to update storage indicator
-        function updateStorageIndicator() {
-            fetch('/api/health')
-                .then(response => response.json())
-                .then(data => {
-                    const storageElem = document.getElementById('storageIndicator');
-                    const status = data.google_sheets_status || 'UNKNOWN';
-                    
-                    if (status.includes('CONNECTED')) {
-                        storageElem.className = 'badge bg-success';
-                        storageElem.textContent = 'Google Sheets ✓';
-                        document.getElementById('storageBadge').className = 'badge bg-success';
-                    } else if (status.includes('ERROR')) {
-                        storageElem.className = 'badge bg-danger';
-                        storageElem.textContent = 'Storage Error';
-                        document.getElementById('storageBadge').className = 'badge bg-danger';
-                    } else {
-                        storageElem.className = 'badge bg-warning';
-                        storageElem.textContent = 'Storage: Connecting...';
-                        document.getElementById('storageBadge').className = 'badge bg-warning';
-                    }
-                });
-        }
-
-        // New function to export data as CSV
-        function exportToCSV() {
-            fetch('/api/trade_history')
-                .then(response => response.json())
-                .then(data => {
-                    if (!data.trades || data.trades.length === 0) {
-                        showNotification('No trade data to export', 'warning');
-                        return;
-                    }
-                    
-                    // Convert to CSV
-                    const headers = ['Trade ID', 'Timestamp', 'Action', 'Entry Price', 'Exit Price', 
-                                   'Profit (Pips)', 'Result', 'Duration (s)', 'Confidence', 'Signal Strength'];
-                    
-                    const csvRows = [
-                        headers.join(','),
-                        ...data.trades.map(trade => [
-                            trade.trade_id,
-                            trade.timestamp,
-                            trade.action,
-                            trade.entry_price,
-                            trade.exit_price || '',
-                            trade.profit_pips,
-                            trade.result,
-                            trade.duration_seconds,
-                            trade.confidence,
-                            trade.signal_strength
-                        ].join(','))
-                    ];
-                    
-                    const csvString = csvRows.join('\n');
-                    const blob = new Blob([csvString], { type: 'text/csv' });
-                    const url = window.URL.createObjectURL(blob);
-                    
-                    // Create download link
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `eurusd_trades_${new Date().toISOString().split('T')[0]}.csv`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    window.URL.revokeObjectURL(url);
-                    
-                    showNotification(`Exported ${data.trades.length} trades to CSV`, 'success');
-                })
-                .catch(error => {
-                    console.error('Export error:', error);
-                    showNotification('Failed to export data', 'danger');
-                });
-        }
-
-        // New function to show notifications
-        function showNotification(message, type = 'info') {
-            // Remove existing notification
-            const existingNotification = document.querySelector('.custom-notification');
-            if (existingNotification) {
-                existingNotification.remove();
-            }
-            
-            // Create notification
-            const notification = document.createElement('div');
-            notification.className = `custom-notification alert alert-${type} alert-dismissible fade show`;
-            notification.style.cssText = `
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                z-index: 9999;
-                min-width: 300px;
-            `;
-            
-            notification.innerHTML = `
-                ${message}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            `;
-            
-            document.body.appendChild(notification);
-            
-            // Auto-remove after 3 seconds
-            setTimeout(() => {
-                if (notification.parentNode) {
-                    notification.remove();
-                }
-            }, 3000);
-        }
-
-        // Start auto-refresh
-        function startAutoRefresh() {
-            setInterval(fetchTradingState, 2000); // Update every 2 seconds
-            setInterval(fetchTradeHistory, 10000); // Update history every 10 seconds
-            setInterval(updateStorageIndicator, 30000); // Update storage status every 30 seconds
-        }
-
-        // You'll need to implement these functions in your main.js:
-        // - fetchTradingState()
-        // - fetchTradeHistory()
-        // - resetTrading()
-        // - And ensure they handle Google Sheets status updates
     </script>
-
-    <style>
-        .fullscreen-chart {
-            position: fixed !important;
-            top: 0;
-            left: 0;
-            width: 100vw !important;
-            height: 100vh !important;
-            z-index: 9999;
-            background: #1a1a1a;
-        }
-        
-        .custom-notification {
-            animation: slideIn 0.3s ease-out;
-        }
-        
-        @keyframes slideIn {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
-        }
-        
-        /* Highlight Google Sheets status */
-        .sheets-badge {
-            font-size: 0.8em;
-            padding: 3px 8px;
-            border-radius: 10px;
-        }
-        
-        /* Storage status indicator */
-        .storage-status {
-            display: inline-block;
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            margin-right: 5px;
-        }
-        
-        .storage-connected { background-color: #28a745; }
-        .storage-warning { background-color: #ffc107; }
-        .storage-error { background-color: #dc3545; }
-    </style>
 </body>
 </html>

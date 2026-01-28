@@ -1,27 +1,23 @@
 /**
- * EUR/USD Trading System - Main JavaScript Module (Google Sheets Edition)
- * Fixed for 2-Minute Cycles with Google Sheets Data Storage
+ * EUR/USD Trading System - Main JavaScript Module
+ * Fixed for 2-Minute Cycles with Google Sheets
  */
 
 // Configuration
 const API_BASE_URL = '';
 const REFRESH_INTERVAL = 2000; // 2 seconds
 const HISTORY_REFRESH_INTERVAL = 5000; // 5 seconds
-const STORAGE_CHECK_INTERVAL = 30000; // 30 seconds
 const CYCLE_DURATION = 120; // ⭐ FIXED: 120 seconds for 2 minutes
 
 // State
 let refreshTimer = null;
 let historyTimer = null;
-let storageTimer = null;
 let lastUpdateTime = null;
 let isAutoRefreshEnabled = true;
-let googleSheetsStatus = 'checking';
-let lastSyncTime = null;
 
 // Initialize when page loads
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('EUR/USD 2-Minute Trading System (Google Sheets Edition) Initialized');
+    console.log('EUR/USD 2-Minute Trading System Initialized');
     
     // Initialize systems
     initializeDashboard();
@@ -44,19 +40,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Initialize dashboard elements
 function initializeDashboard() {
-    console.log('Dashboard initialized (2-Minute Cycles, Google Sheets)');
+    console.log('Dashboard initialized (2-Minute Cycles)');
     
     // Set initial values
     updateSystemStatus('Initializing...', 'warning');
     updateAutoRefreshStatus(true);
-    updateStorageStatus('checking', 'Checking Google Sheets...');
     
     // Set cycle duration displays
     updateElementText('remainingTime', `${CYCLE_DURATION}s`);
-    
-    // Update last sync time
-    updateElementText('lastSync', 'Never');
-    lastSyncTime = new Date();
 }
 
 // Set up all event listeners
@@ -80,47 +71,6 @@ function setupEventListeners() {
             }
         });
     }
-    
-    // Check Google Sheets button
-    const checkSheetsBtn = document.getElementById('checkSheetsBtn');
-    if (checkSheetsBtn) {
-        checkSheetsBtn.addEventListener('click', function() {
-            checkGoogleSheetsConnection();
-        });
-    }
-    
-    // Sync button
-    const syncBtn = document.getElementById('syncBtn');
-    if (syncBtn) {
-        syncBtn.addEventListener('click', function() {
-            fetchTradeHistory();
-            showToast('Syncing with Google Sheets...', 'info');
-        });
-    }
-    
-    // Export CSV button
-    const exportBtn = document.getElementById('exportBtn');
-    if (exportBtn) {
-        exportBtn.addEventListener('click', function() {
-            exportToCSV();
-        });
-    }
-    
-    // Toggle auto-refresh
-    const autoRefreshToggle = document.getElementById('autoRefreshToggle');
-    if (autoRefreshToggle) {
-        autoRefreshToggle.addEventListener('click', function() {
-            toggleAutoRefresh();
-        });
-    }
-    
-    // Toggle chart fullscreen
-    const toggleChartBtn = document.getElementById('toggleChart');
-    if (toggleChartBtn) {
-        toggleChartBtn.addEventListener('click', function() {
-            // Chart fullscreen handled by charts.js
-        });
-    }
 }
 
 // Fetch current trading state from API
@@ -137,20 +87,19 @@ function fetchTradingState() {
             updateSystemStatus('Active', 'success');
             lastUpdateTime = new Date();
             
-            // Update storage status from API response
+            // Update storage indicator
             if (data.google_sheets_status) {
-                updateStorageStatusFromAPI(data.google_sheets_status);
+                updateStorageIndicator(data.google_sheets_status);
             }
         })
         .catch(error => {
             console.error('Error fetching trading state:', error);
             updateSystemStatus('Connection Error', 'danger');
-            updateStorageStatus('error', 'Connection Error');
             showToast('Failed to fetch trading data', 'error');
         });
 }
 
-// Fetch trade history from API (Google Sheets)
+// Fetch trade history from API
 function fetchTradeHistory() {
     fetch('/api/trade_history')
         .then(response => {
@@ -161,87 +110,14 @@ function fetchTradeHistory() {
         })
         .then(data => {
             updateTradeHistory(data);
-            lastSyncTime = new Date();
-            updateElementText('lastSync', formatTime(lastSyncTime));
             
             // Update storage status
             if (data.google_sheets_status) {
-                updateStorageStatusFromAPI(data.google_sheets_status);
+                updateStorageIndicator(data.google_sheets_status);
             }
         })
         .catch(error => {
             console.error('Error fetching trade history:', error);
-            updateStorageStatus('error', 'Failed to sync');
-        });
-}
-
-// Check Google Sheets connection
-function checkGoogleSheetsConnection() {
-    showToast('Checking Google Sheets connection...', 'info');
-    
-    fetch('/api/health')
-        .then(response => response.json())
-        .then(data => {
-            const status = data.google_sheets_status || 'UNKNOWN';
-            updateStorageStatusFromAPI(status);
-            showToast(`Google Sheets: ${status}`, 
-                     status.includes('CONNECTED') ? 'success' : 'warning');
-        })
-        .catch(error => {
-            console.error('Error checking Google Sheets:', error);
-            updateStorageStatus('error', 'Check failed');
-            showToast('Failed to check Google Sheets connection', 'danger');
-        });
-}
-
-// Export trade history to CSV
-function exportToCSV() {
-    fetch('/api/trade_history')
-        .then(response => response.json())
-        .then(data => {
-            if (!data.trades || data.trades.length === 0) {
-                showToast('No trade data to export', 'warning');
-                return;
-            }
-            
-            // Convert to CSV
-            const headers = ['Trade ID', 'Timestamp', 'Action', 'Entry Price', 'Exit Price', 
-                           'Profit (Pips)', 'Result', 'Duration (s)', 'Confidence', 'Signal Strength'];
-            
-            const csvRows = [
-                headers.join(','),
-                ...data.trades.map(trade => [
-                    trade.trade_id,
-                    trade.timestamp,
-                    trade.action,
-                    trade.entry_price,
-                    trade.exit_price || '',
-                    trade.profit_pips,
-                    trade.result,
-                    trade.duration_seconds,
-                    trade.confidence,
-                    trade.signal_strength
-                ].join(','))
-            ];
-            
-            const csvString = csvRows.join('\n');
-            const blob = new Blob([csvString], { type: 'text/csv' });
-            const url = window.URL.createObjectURL(blob);
-            
-            // Create download link
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `eurusd_trades_${new Date().toISOString().split('T')[0]}.csv`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
-            
-            showToast(`Exported ${data.trades.length} trades to CSV`, 'success');
-        })
-        .catch(error => {
-            console.error('Export error:', error);
-            showToast('Failed to export data', 'danger');
         });
 }
 
@@ -350,11 +226,6 @@ function updateDashboard(data) {
         storageStatus.className = `badge ${badgeClass}`;
     }
     
-    // Update cache efficiency
-    if (data.cache_efficiency) {
-        updateElementText('cacheEfficiency', data.cache_efficiency);
-    }
-    
     // Update TP/SL levels
     updateElementText('optimalTp', data.optimal_tp ? data.optimal_tp.toFixed(5) : '-');
     updateElementText('optimalSl', data.optimal_sl ? data.optimal_sl.toFixed(5) : '-');
@@ -363,6 +234,12 @@ function updateDashboard(data) {
     const slPips = data.sl_distance_pips || 0;
     updateElementText('tpPips', `<span class="badge bg-success">${tpPips} pips</span>`);
     updateElementText('slPips', `<span class="badge bg-danger">${slPips} pips</span>`);
+    
+    // Update risk/reward ratio
+    if (tpPips > 0 && slPips > 0) {
+        const riskReward = (tpPips / slPips).toFixed(2);
+        updateElementText('riskReward', `1:${riskReward}`);
+    }
     
     // Update active trade
     updateActiveTrade(data.current_trade);
@@ -376,12 +253,9 @@ function updateDashboard(data) {
     if (data.price_history && Array.isArray(data.price_history)) {
         updatePriceHistory(data.price_history);
     }
-    
-    // Update trade status
-    updateElementText('tradeStatus', data.trade_status || 'NO_TRADE');
 }
 
-// Update active trade display (adjusted for 120 seconds)
+// Update active trade display
 function updateActiveTrade(trade) {
     const activeTradeDiv = document.getElementById('activeTrade');
     
@@ -399,9 +273,8 @@ function updateActiveTrade(trade) {
     const profitPips = trade.profit_pips || 0;
     const duration = trade.duration_seconds || 0;
     const timeRemaining = Math.max(0, CYCLE_DURATION - duration);
-    const profitPercent = trade.profit_amount ? ((trade.profit_amount / trade.trade_size) * 100).toFixed(3) : '0.000';
     
-    // Calculate progress percentage (based on 120 seconds)
+    // Calculate progress percentage
     const progressPercent = Math.min(100, (duration / CYCLE_DURATION) * 100);
     
     activeTradeDiv.innerHTML = `
@@ -453,7 +326,7 @@ function updateActiveTrade(trade) {
     `;
 }
 
-// Update trade history table (from Google Sheets)
+// Update trade history table
 function updateTradeHistory(data) {
     const tbody = document.getElementById('tradeHistory');
     
@@ -461,34 +334,25 @@ function updateTradeHistory(data) {
         tbody.innerHTML = `
             <tr>
                 <td colspan="10" class="text-center py-4">
-                    <i class="bi bi-cloud-arrow-down display-6 d-block text-muted mb-2"></i>
+                    <i class="bi bi-inbox display-6 d-block text-muted mb-2"></i>
                     <span class="text-muted">No trades in Google Sheets yet</span>
-                    <div class="spinner-border spinner-border-sm text-primary mt-2" role="status">
-                        <span class="visually-hidden">Loading...</span>
-                    </div>
                 </td>
             </tr>
         `;
         
         updateElementText('totalHistoryTrades', '0');
         updateElementText('totalWins', '0');
-        
-        // Update storage badge
-        updateStorageBadge(data.google_sheets_status);
         return;
     }
     
     // Update summary counts
     const totalTrades = data.total || data.trades.length;
     const profitableTrades = data.profitable || data.trades.filter(t => 
-        t.result && (t.result === 'SUCCESS' || t.result === 'PARTIAL_SUCCESS' || t.result === 'WIN')
+        t.result && (t.result === 'SUCCESS' || t.result === 'WIN')
     ).length;
     
     updateElementText('totalHistoryTrades', totalTrades);
     updateElementText('totalWins', profitableTrades);
-    
-    // Update storage badge
-    updateStorageBadge(data.google_sheets_status);
     
     // Build table rows
     let html = '';
@@ -502,7 +366,7 @@ function updateTradeHistory(data) {
         const confidence = trade.confidence || 0;
         
         // Format time
-        const timeStr = entryTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const timeStr = entryTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         
         // Determine result badge class
         let resultClass = 'bg-secondary';
@@ -559,90 +423,24 @@ function updateTradeHistory(data) {
     tbody.innerHTML = html;
 }
 
-// Update storage status badge
-function updateStorageBadge(status) {
-    const badge = document.getElementById('storageBadge');
-    if (!badge) return;
-    
-    let badgeClass = 'bg-warning';
-    let badgeIcon = 'bi-cloud';
-    let badgeText = 'Sheets';
+// Update storage indicator
+function updateStorageIndicator(status) {
+    const storageIndicator = document.getElementById('storageIndicator');
+    if (!storageIndicator) return;
     
     if (status && status.includes('CONNECTED')) {
-        badgeClass = 'bg-success';
-        badgeIcon = 'bi-cloud-check';
-        badgeText = 'Sheets ✓';
-    } else if (status && (status.includes('ERROR') || status.includes('FAILED'))) {
-        badgeClass = 'bg-danger';
-        badgeIcon = 'bi-cloud-slash';
-        badgeText = 'Sheets ✗';
-    }
-    
-    badge.className = `badge ${badgeClass}`;
-    badge.innerHTML = `<i class="bi ${badgeIcon}"></i> ${badgeText}`;
-}
-
-// Update storage status from API response
-function updateStorageStatusFromAPI(status) {
-    googleSheetsStatus = status;
-    
-    // Update sheets status badge
-    const sheetsStatus = document.getElementById('sheetsStatus');
-    if (sheetsStatus) {
-        let badgeClass = 'bg-warning';
-        let statusText = 'Sheets: Checking...';
-        
-        if (status.includes('CONNECTED')) {
-            badgeClass = 'bg-success';
-            statusText = 'Sheets: Connected';
-        } else if (status.includes('ERROR')) {
-            badgeClass = 'bg-danger';
-            statusText = 'Sheets: Error';
-        }
-        
-        sheetsStatus.className = `badge ${badgeClass}`;
-        sheetsStatus.textContent = statusText;
-    }
-    
-    // Update storage indicator in footer
-    const storageIndicator = document.getElementById('storageIndicator');
-    if (storageIndicator) {
-        if (status.includes('CONNECTED')) {
-            storageIndicator.className = 'badge bg-success';
-            storageIndicator.textContent = 'Google Sheets ✓';
-        } else if (status.includes('ERROR')) {
-            storageIndicator.className = 'badge bg-danger';
-            storageIndicator.textContent = 'Storage Error';
-        } else {
-            storageIndicator.className = 'badge bg-warning';
-            storageIndicator.textContent = 'Storage: Connecting...';
-        }
+        storageIndicator.className = 'badge bg-success';
+        storageIndicator.textContent = 'Google Sheets ✓';
+    } else if (status && status.includes('ERROR')) {
+        storageIndicator.className = 'badge bg-danger';
+        storageIndicator.textContent = 'Storage Error';
+    } else {
+        storageIndicator.className = 'badge bg-warning';
+        storageIndicator.textContent = 'Storage: Connecting...';
     }
 }
 
-// Update storage status
-function updateStorageStatus(status, message = '') {
-    googleSheetsStatus = status;
-    
-    const indicator = document.getElementById('storageStatus');
-    if (indicator) {
-        let badgeClass = 'bg-warning';
-        let displayText = 'Checking...';
-        
-        if (status === 'connected') {
-            badgeClass = 'bg-success';
-            displayText = 'Google Sheets ✓';
-        } else if (status === 'error') {
-            badgeClass = 'bg-danger';
-            displayText = 'Storage Error';
-        }
-        
-        indicator.className = `badge ${badgeClass}`;
-        indicator.textContent = displayText;
-    }
-}
-
-// Reset trading statistics (preserves Google Sheets data)
+// Reset trading statistics
 function resetTrading() {
     fetch('/api/reset_trading', {
         method: 'POST',
@@ -671,7 +469,7 @@ function resetTrading() {
     });
 }
 
-// Start auto-refresh with storage checks
+// Start auto-refresh
 function startAutoRefresh() {
     if (refreshTimer) {
         clearInterval(refreshTimer);
@@ -683,7 +481,7 @@ function startAutoRefresh() {
         }
     }, REFRESH_INTERVAL);
     
-    // Separate timer for history (less frequent)
+    // Separate timer for history
     if (historyTimer) {
         clearInterval(historyTimer);
     }
@@ -694,19 +492,8 @@ function startAutoRefresh() {
         }
     }, HISTORY_REFRESH_INTERVAL);
     
-    // Storage check timer
-    if (storageTimer) {
-        clearInterval(storageTimer);
-    }
-    
-    storageTimer = setInterval(() => {
-        if (isAutoRefreshEnabled) {
-            checkGoogleSheetsConnection();
-        }
-    }, STORAGE_CHECK_INTERVAL);
-    
     updateAutoRefreshStatus(true);
-    console.log('Auto-refresh started with Google Sheets monitoring');
+    console.log('Auto-refresh started');
 }
 
 // Stop auto-refresh
@@ -721,26 +508,8 @@ function stopAutoRefresh() {
         historyTimer = null;
     }
     
-    if (storageTimer) {
-        clearInterval(storageTimer);
-        storageTimer = null;
-    }
-    
     updateAutoRefreshStatus(false);
     console.log('Auto-refresh stopped');
-}
-
-// Toggle auto-refresh
-function toggleAutoRefresh() {
-    isAutoRefreshEnabled = !isAutoRefreshEnabled;
-    
-    if (isAutoRefreshEnabled) {
-        startAutoRefresh();
-        showToast('Auto-refresh enabled', 'info');
-    } else {
-        stopAutoRefresh();
-        showToast('Auto-refresh disabled', 'warning');
-    }
 }
 
 // Helper function to update element text
@@ -779,23 +548,14 @@ function formatTime(dateString) {
     if (!dateString) return '-';
     
     try {
-        if (typeof dateString === 'string') {
-            const date = new Date(dateString);
-            return date.toLocaleTimeString([], { 
-                hour: '2-digit', 
-                minute: '2-digit',
-                second: '2-digit'
-            });
-        } else if (dateString instanceof Date) {
-            return dateString.toLocaleTimeString([], { 
-                hour: '2-digit', 
-                minute: '2-digit',
-                second: '2-digit'
-            });
-        }
-        return '-';
+        const date = new Date(dateString);
+        return date.toLocaleTimeString([], { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            second: '2-digit'
+        });
     } catch (e) {
-        return '-';
+        return dateString;
     }
 }
 
@@ -875,14 +635,4 @@ window.addEventListener('beforeunload', function() {
     }
 });
 
-// Export functions for debugging
-window.fetchTradingState = fetchTradingState;
-window.fetchTradeHistory = fetchTradeHistory;
-window.resetTrading = resetTrading;
-window.checkGoogleSheetsConnection = checkGoogleSheetsConnection;
-window.exportToCSV = exportToCSV;
-window.startAutoRefresh = startAutoRefresh;
-window.stopAutoRefresh = stopAutoRefresh;
-window.toggleAutoRefresh = toggleAutoRefresh;
-
-console.log('Main.js loaded successfully (2-Minute Cycle, Google Sheets Edition)');
+console.log('Main.js loaded successfully (2-Minute Cycle, Google Sheets)');

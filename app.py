@@ -1,7 +1,7 @@
 """
 EUR/USD 2-Minute Auto-Learning Trading System
 WITH 30-SECOND CACHING for API limit protection
-AND GOOGLE SHEETS DATA STORAGE via SheetDB
+AND GOOGLE SHEETS DATA STORAGE
 """
 
 import os
@@ -35,9 +35,7 @@ BASE_TRADE_SIZE = 1000.0
 MIN_CONFIDENCE = 65.0
 
 # ==================== GOOGLE SHEETS CONFIGURATION ====================
-# SheetDB.io endpoint for Google Sheets
 SHEETDB_API_URL = "https://sheetdb.io/api/v1/lfjhagwynpocp"  # Your SheetDB endpoint
-SHEETDB_API_KEY = os.environ.get('SHEETDB_API_KEY', '')  # Optional API key if needed
 GOOGLE_SHEETS_ENABLED = True
 
 # ==================== CACHE CONFIGURATION ====================
@@ -116,13 +114,12 @@ logger = logging.getLogger(__name__)
 
 # Print startup banner
 print("="*80)
-print("EUR/USD 2-MINUTE TRADING SYSTEM WITH GOOGLE SHEETS STORAGE")
+print("EUR/USD 2-MINUTE TRADING SYSTEM WITH CACHING")
 print("="*80)
 print(f"Cycle: Predict and trade every {CYCLE_MINUTES} minutes ({CYCLE_SECONDS} seconds)")
 print(f"Cache Duration: {CACHE_DURATION} seconds (66% API reduction)")
 print(f"API Calls/Day: ~240 (SAFE for all free limits)")
-print(f"Data Storage: Google Sheets via SheetDB.io")
-print(f"SheetDB Endpoint: {SHEETDB_API_URL}")
+print(f"Data Storage: Google Sheets")
 print(f"Initial Balance: ${INITIAL_BALANCE:,.2f}")
 print(f"Trade Size: ${BASE_TRADE_SIZE:,.2f}")
 print("="*80)
@@ -130,7 +127,7 @@ print("Starting system...")
 
 # ==================== GOOGLE SHEETS FUNCTIONS ====================
 def save_trade_to_google_sheets(trade_data):
-    """Save trade data to Google Sheets via SheetDB"""
+    """Save trade data to Google Sheets"""
     if not GOOGLE_SHEETS_ENABLED:
         return {'success': False, 'message': 'Google Sheets disabled'}
     
@@ -140,15 +137,10 @@ def save_trade_to_google_sheets(trade_data):
             "data": [trade_data]
         }
         
-        # Add headers if API key is provided
-        headers = {'Content-Type': 'application/json'}
-        if SHEETDB_API_KEY:
-            headers['Authorization'] = f'Bearer {SHEETDB_API_KEY}'
-        
         response = requests.post(
             SHEETDB_API_URL,
             json=sheetdb_data,
-            headers=headers,
+            headers={'Content-Type': 'application/json'},
             timeout=10
         )
         
@@ -157,18 +149,10 @@ def save_trade_to_google_sheets(trade_data):
             trading_state['google_sheets_status'] = 'CONNECTED'
             return {'success': True, 'data': response.json()}
         else:
-            logger.warning(f"⚠️  SheetDB API error: {response.status_code} - {response.text[:100]}")
+            logger.warning(f"⚠️  SheetDB API error: {response.status_code}")
             trading_state['google_sheets_status'] = f'ERROR: {response.status_code}'
             return {'success': False, 'error': f'API Error {response.status_code}'}
             
-    except requests.exceptions.Timeout:
-        logger.error("⏱️  SheetDB API timeout")
-        trading_state['google_sheets_status'] = 'TIMEOUT'
-        return {'success': False, 'error': 'API Timeout'}
-    except requests.exceptions.ConnectionError:
-        logger.error("🔌 SheetDB connection error")
-        trading_state['google_sheets_status'] = 'CONNECTION_ERROR'
-        return {'success': False, 'error': 'Connection Error'}
     except Exception as e:
         logger.error(f"❌ Error saving to Google Sheets: {str(e)[:100]}")
         trading_state['google_sheets_status'] = f'ERROR: {str(e)[:30]}'
@@ -180,11 +164,7 @@ def get_trades_from_google_sheets():
         return []
     
     try:
-        headers = {}
-        if SHEETDB_API_KEY:
-            headers['Authorization'] = f'Bearer {SHEETDB_API_KEY}'
-        
-        response = requests.get(SHEETDB_API_URL, headers=headers, timeout=10)
+        response = requests.get(SHEETDB_API_URL, timeout=10)
         
         if response.status_code == 200:
             data = response.json()
@@ -202,9 +182,7 @@ def get_trades_from_google_sheets():
         return []
 
 def initialize_google_sheets():
-    """Initialize connection to Google Sheets and load existing data"""
-    global trade_history
-    
+    """Initialize connection to Google Sheets"""
     if not GOOGLE_SHEETS_ENABLED:
         logger.info("Google Sheets storage disabled")
         trading_state['google_sheets_status'] = 'DISABLED'
@@ -217,45 +195,36 @@ def initialize_google_sheets():
         test_response = requests.get(SHEETDB_API_URL, timeout=5)
         
         if test_response.status_code == 200:
-            # Load existing trades from Google Sheets
+            # Load existing trades
             existing_trades = get_trades_from_google_sheets()
             
             if existing_trades:
-                # Convert to our trade format
+                # Convert to our format
                 for trade in existing_trades:
-                    # Convert string numbers back to floats
-                    for key in ['entry_price', 'exit_price', 'profit_pips', 'confidence', 
-                               'bb_percent_at_entry', 'rsi_at_entry', 'macd_hist_at_entry', 
-                               'volatility_at_entry', 'duration_seconds']:
-                        if key in trade and trade[key] is not None:
+                    # Convert numeric fields
+                    numeric_fields = ['trade_id', 'entry_price', 'exit_price', 'profit_pips', 
+                                    'confidence', 'duration_seconds', 'cycle_number', 
+                                    'signal_strength', 'sl_distance_pips', 'tp_distance_pips']
+                    for field in numeric_fields:
+                        if field in trade:
                             try:
-                                trade[key] = float(trade[key])
-                            except (ValueError, TypeError):
-                                trade[key] = 0.0
-                    
-                    # Convert integers
-                    for key in ['trade_id', 'cycle_number', 'signal_strength', 
-                               'sl_distance_pips', 'tp_distance_pips']:
-                        if key in trade and trade[key] is not None:
-                            try:
-                                trade[key] = int(trade[key])
-                            except (ValueError, TypeError):
-                                trade[key] = 0
+                                trade[field] = float(trade[field]) if '.' in str(trade[field]) else int(trade[field])
+                            except:
+                                trade[field] = 0
                 
-                trade_history = existing_trades[-100:]  # Keep last 100 trades in memory
+                trade_history.extend(existing_trades)
                 trading_state['total_trades'] = len(existing_trades)
                 
                 # Count profitable trades
-                profitable_count = sum(1 for t in existing_trades 
-                                     if t.get('result') in ['SUCCESS', 'PARTIAL_SUCCESS', 'WIN'])
-                trading_state['profitable_trades'] = profitable_count
+                profitable = sum(1 for t in existing_trades 
+                               if t.get('result') in ['SUCCESS', 'WIN'])
+                trading_state['profitable_trades'] = profitable
                 
                 if trading_state['total_trades'] > 0:
                     trading_state['win_rate'] = (trading_state['profitable_trades'] / 
                                                 trading_state['total_trades']) * 100
                 
                 logger.info(f"✅ Loaded {len(existing_trades)} trades from Google Sheets")
-                logger.info(f"✅ Win Rate: {trading_state['win_rate']:.1f}%")
                 trading_state['google_sheets_status'] = 'CONNECTED'
             else:
                 logger.info("✅ Google Sheets connected (no existing trades)")
@@ -270,7 +239,7 @@ def initialize_google_sheets():
 
 # ==================== CACHED FOREX DATA FETCHING ====================
 def get_cached_eurusd_price():
-    """Get EUR/USD price with 30-second caching to prevent API limits"""
+    """Get EUR/USD price with 30-second caching"""
     
     current_time = time.time()
     cache_age = current_time - price_cache['timestamp']
@@ -280,7 +249,7 @@ def get_cached_eurusd_price():
         price_cache['hits'] += 1
         update_cache_efficiency()
         
-        # Add tiny realistic fluctuation to cached price
+        # Add tiny realistic fluctuation
         tiny_change = np.random.uniform(-0.00001, 0.00001)
         cached_price = price_cache['price'] + tiny_change
         
@@ -289,12 +258,12 @@ def get_cached_eurusd_price():
         
         return cached_price, f"Cached ({price_cache['source']})"
     
-    # ⭐ CACHE MISS: Need fresh price from APIs
+    # ⭐ CACHE MISS: Need fresh price
     price_cache['misses'] += 1
     update_cache_efficiency()
     logger.info("🔄 Cache MISS: Fetching fresh price from APIs...")
     
-    # List of reliable APIs with good limits
+    # List of APIs
     apis_to_try = [
         {
             'name': 'Frankfurter',
@@ -316,7 +285,6 @@ def get_cached_eurusd_price():
             logger.info(f"Trying {api['name']} API...")
             response = requests.get(api['url'], params=api['params'], timeout=5)
             
-            # Handle rate limits gracefully
             if response.status_code == 429:
                 logger.warning(f"⏸️ {api['name']} rate limit reached, skipping...")
                 continue
@@ -328,7 +296,7 @@ def get_cached_eurusd_price():
                 if rate:
                     current_price = float(rate)
                     
-                    # ⭐ UPDATE CACHE with fresh price
+                    # ⭐ UPDATE CACHE
                     price_cache.update({
                         'price': current_price,
                         'timestamp': current_time,
@@ -344,11 +312,10 @@ def get_cached_eurusd_price():
             logger.warning(f"{api['name']} failed: {str(e)[:50]}")
             continue
     
-    # ⭐ ALL APIS FAILED: Use stale cache as fallback
+    # ⭐ ALL APIS FAILED: Use stale cache
     logger.warning("⚠️ All APIs failed, using stale cached data")
     
     if price_cache['price']:
-        # Add small realistic movement to stale price
         stale_change = np.random.uniform(-0.00005, 0.00005)
         stale_price = price_cache['price'] + stale_change
         
@@ -361,12 +328,12 @@ def get_cached_eurusd_price():
         trading_state['api_status'] = 'STALE_CACHE'
         return stale_price, f"Stale Cache ({price_cache['source']})"
     else:
-        # First run, no cache yet
+        # First run
         trading_state['api_status'] = 'SIMULATION'
         return 1.0850, 'Simulation (Initial)'
 
 def update_cache_efficiency():
-    """Calculate and update cache efficiency metrics"""
+    """Calculate cache efficiency"""
     total = price_cache['hits'] + price_cache['misses']
     if total > 0:
         efficiency = (price_cache['hits'] / total) * 100
@@ -375,7 +342,7 @@ def update_cache_efficiency():
         trading_state['cache_misses'] = price_cache['misses']
 
 def create_price_series(current_price, num_points=120):
-    """Create realistic 2-minute price series for analysis"""
+    """Create price series for analysis"""
     prices = []
     base_price = float(current_price)
     
@@ -395,7 +362,7 @@ def create_price_series(current_price, num_points=120):
 
 # ==================== TECHNICAL ANALYSIS ====================
 def calculate_advanced_indicators(prices):
-    """Calculate comprehensive indicators for 2-minute prediction"""
+    """Calculate indicators for 2-minute prediction"""
     df = pd.DataFrame(prices, columns=['close'])
     
     try:
@@ -431,10 +398,6 @@ def calculate_advanced_indicators(prices):
         # ATR for volatility
         df['atr'] = ta.atr(df['close'], df['close'], df['close'], length=14)
         
-        # Support/Resistance
-        df['resistance'] = df['close'].rolling(15).max()
-        df['support'] = df['close'].rolling(15).min()
-        
         # Market condition flags
         df['overbought'] = (df['rsi'] > 70).astype(int)
         df['oversold'] = (df['rsi'] < 30).astype(int)
@@ -450,13 +413,12 @@ def calculate_advanced_indicators(prices):
 
 # ==================== ML TRAINING SYSTEM ====================
 def initialize_training_system():
-    """Initialize ML training data from trade history"""
+    """Initialize ML training data"""
     global ml_features, tp_labels, sl_labels, ml_trained
     
     if trade_history and len(trade_history) >= 10:
         try:
-            # Extract features from recent trades for ML
-            for trade in trade_history[-50:]:  # Use last 50 trades
+            for trade in trade_history[-50:]:
                 features = [
                     trade.get('confidence', 0) / 100,
                     trade.get('bb_percent_at_entry', 50) / 100,
@@ -467,7 +429,6 @@ def initialize_training_system():
                 ]
                 ml_features.append(features)
                 
-                # Use profit as label (simplified)
                 profit = trade.get('profit_pips', 0)
                 tp_labels.append(max(5, min(20, abs(profit) + 5)))
                 sl_labels.append(max(3, min(15, abs(profit) + 3)))
@@ -547,7 +508,7 @@ def extract_ml_features(df, current_price):
     return features
 
 def predict_optimal_levels(features, direction, current_price, df):
-    """Predict optimal TP and SL levels for 2-minute trades"""
+    """Predict optimal TP and SL levels"""
     
     # Base levels for 2-minute trades
     if direction == "BULLISH":
@@ -600,7 +561,7 @@ def predict_optimal_levels(features, direction, current_price, df):
 
 # ==================== 2-MINUTE PREDICTION ENGINE ====================
 def analyze_2min_prediction(df, current_price):
-    """Predict 2-minute price direction with high accuracy"""
+    """Predict 2-minute price direction"""
     
     if len(df) < 20:
         return 0.5, 50, 'ANALYZING', 1
@@ -719,9 +680,9 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
         'cycle_number': trading_state['cycle_count'],
         'confidence': float(confidence),
         'signal_strength': signal_strength,
-        'bb_percent_at_entry': 50.0,  # Placeholder - will be updated
-        'rsi_at_entry': 50.0,  # Placeholder - will be updated
-        'macd_hist_at_entry': 0.0,  # Placeholder - will be updated
+        'bb_percent_at_entry': 50.0,
+        'rsi_at_entry': 50.0,
+        'macd_hist_at_entry': 0.0,
         'volatility_at_entry': 0.0005,
         'sl_distance_pips': sl_pips,
         'tp_distance_pips': tp_pips,
@@ -740,7 +701,7 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
     trading_state['trade_status'] = 'ACTIVE'
     trading_state['signal_strength'] = signal_strength
     
-    # Save initial trade to Google Sheets
+    # Save to Google Sheets
     save_trade_to_google_sheets(trade)
     
     logger.info(f"🔔 {action} ORDER EXECUTED")
@@ -749,7 +710,6 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
     logger.info(f"   Take Profit: {optimal_tp:.5f} ({tp_pips} pips)")
     logger.info(f"   Stop Loss: {optimal_sl:.5f} ({sl_pips} pips)")
     logger.info(f"   Confidence: {confidence:.1f}%")
-    logger.info(f"   Google Sheets: Saved")
     logger.info(f"   Goal: Hit TP ({tp_pips} pips) before SL ({sl_pips} pips) in {CYCLE_SECONDS} seconds")
     
     return trade
@@ -760,7 +720,7 @@ def monitor_active_trade(current_price):
         return None
     
     trade = trading_state['current_trade']
-    entry_time = datetime.fromisoformat(trade['timestamp']) if isinstance(trade['timestamp'], str) else trade['timestamp']
+    entry_time = datetime.fromisoformat(trade['timestamp'])
     trade_duration = (datetime.now() - entry_time).total_seconds()
     
     # Calculate current P&L
@@ -939,8 +899,6 @@ def create_trading_chart(prices, current_trade, next_cycle):
         
         # Update layout
         title = f'EUR/USD 2-Minute Trading - Next Cycle: {next_cycle}s'
-        if 'Cache' in trading_state['data_source'] or 'Simulation' in trading_state['data_source']:
-            title += f' ({trading_state["data_source"]})'
         
         fig.update_layout(
             title=dict(
@@ -979,13 +937,13 @@ def trading_cycle():
     
     cycle_count = 0
     
-    # Initialize Google Sheets connection
+    # Initialize Google Sheets
     initialize_google_sheets()
     
     # Initialize ML system
     initialize_training_system()
     
-    logger.info("✅ Trading bot started with 2-minute cycles and Google Sheets storage")
+    logger.info("✅ Trading bot started with 2-minute cycles")
     
     while True:
         try:
@@ -1000,8 +958,8 @@ def trading_cycle():
             logger.info(f"2-MINUTE TRADING CYCLE #{cycle_count}")
             logger.info(f"{'='*70}")
             
-            # 1. GET MARKET DATA (WITH CACHE)
-            logger.info("Fetching EUR/USD price (with caching)...")
+            # 1. GET MARKET DATA
+            logger.info("Fetching EUR/USD price...")
             current_price, data_source = get_cached_eurusd_price()
             
             # Track price history
@@ -1015,7 +973,7 @@ def trading_cycle():
             trading_state['is_demo_data'] = 'Simulation' in data_source or 'Cache' in data_source
             trading_state['api_calls_today'] = '~240 (SAFE)'
             
-            # 2. CREATE PRICE SERIES FOR ANALYSIS
+            # 2. CREATE PRICE SERIES
             price_series = create_price_series(current_price, 120)
             
             # 3. CALCULATE TECHNICAL INDICATORS
@@ -1094,7 +1052,7 @@ def trading_cycle():
             logger.info(f"  Next cycle in: {next_cycle_time}s")
             logger.info(f"{'='*70}")
             
-            # 14. WAIT FOR NEXT CYCLE WITH PROGRESS UPDATES
+            # 14. WAIT FOR NEXT CYCLE
             for i in range(next_cycle_time):
                 progress_pct = (i / next_cycle_time) * 100
                 trading_state['cycle_progress'] = progress_pct
@@ -1102,7 +1060,7 @@ def trading_cycle():
                 
                 # Update active trade progress if exists
                 if trading_state['current_trade']:
-                    entry_time = datetime.fromisoformat(trading_state['current_trade']['timestamp']) if isinstance(trading_state['current_trade']['timestamp'], str) else trading_state['current_trade']['timestamp']
+                    entry_time = datetime.fromisoformat(trading_state['current_trade']['timestamp'])
                     trade_duration = (datetime.now() - entry_time).total_seconds()
                     trading_state['trade_progress'] = (trade_duration / CYCLE_SECONDS) * 100
                 
@@ -1129,7 +1087,6 @@ def get_trading_state():
         # Make current trade serializable
         if state_copy['current_trade']:
             trade = state_copy['current_trade'].copy()
-            # Convert datetime strings to ISO format if needed
             for key in trade:
                 if isinstance(trade[key], datetime):
                     trade[key] = trade[key].isoformat()
@@ -1144,12 +1101,11 @@ def get_trading_state():
 def get_trade_history():
     """Get trade history from Google Sheets"""
     try:
-        # Always get fresh data from Google Sheets
         sheet_trades = get_trades_from_google_sheets()
         
         # Format for display
         display_trades = []
-        for trade in sheet_trades[-10:]:  # Last 10 trades
+        for trade in sheet_trades[-10:]:
             trade_copy = {}
             for key in ['trade_id', 'timestamp', 'action', 'entry_price', 'exit_price',
                        'profit_pips', 'result', 'duration_seconds', 'cycle_number',
@@ -1177,33 +1133,9 @@ def get_trade_history():
         logger.error(f"Trade history error: {e}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/ml_status')
-def get_ml_status():
-    """Get ML training status"""
-    return jsonify({
-        'ml_model_ready': trading_state['ml_model_ready'],
-        'training_samples': len(ml_features),
-        'google_sheets_trades': len(trade_history),
-        'last_trained': trading_state['last_update']
-    })
-
-@app.route('/api/cache_status')
-def get_cache_status():
-    """Get cache status"""
-    return jsonify({
-        'cache_duration': CACHE_DURATION,
-        'cache_hits': price_cache['hits'],
-        'cache_misses': price_cache['misses'],
-        'cache_efficiency': trading_state['cache_efficiency'],
-        'current_price': price_cache['price'],
-        'last_update': datetime.fromtimestamp(price_cache['timestamp']).isoformat(),
-        'source': price_cache['source'],
-        'api_calls_today': '~240 (66% reduction)'
-    })
-
 @app.route('/api/reset_trading')
 def reset_trading():
-    """Reset trading statistics (doesn't delete Google Sheets data)"""
+    """Reset trading statistics"""
     global trade_history, ml_features, tp_labels, sl_labels
     
     trading_state.update({
@@ -1213,7 +1145,6 @@ def reset_trading():
         'total_profit': 0.0,
         'win_rate': 0.0,
         'current_trade': None,
-        'prediction_accuracy': 0.0,
         'trade_status': 'RESET',
         'trade_progress': 0,
         'cycle_progress': 0
@@ -1225,7 +1156,7 @@ def reset_trading():
     tp_labels.clear()
     sl_labels.clear()
     
-    logger.info("Trading statistics reset (Google Sheets data preserved)")
+    logger.info("Trading statistics reset")
     
     return jsonify({'success': True, 'message': 'Trading reset complete'})
 
@@ -1254,7 +1185,7 @@ def start_trading_bot():
         logger.info("✅ Trading bot started successfully")
         print("✅ 2-Minute trading system ACTIVE")
         print(f"✅ Caching: {CACHE_DURATION}-second cache enabled")
-        print(f"✅ Google Sheets: Connected via SheetDB")
+        print(f"✅ Google Sheets: Connected")
         print("✅ API Calls/Day: ~240 (SAFE for all free limits)")
         print("✅ ML Training: Ready after 10 trades")
     except Exception as e:
@@ -1272,10 +1203,8 @@ if __name__ == '__main__':
     print("="*80)
     print("GOOGLE SHEETS SYSTEM READY")
     print(f"• 2-minute cycles with {CACHE_DURATION}-second caching")
-    print(f"• Data Storage: Google Sheets via SheetDB")
-    print(f"• SheetDB Endpoint: {SHEETDB_API_URL}")
-    print(f"• API calls: ~240/day (66% reduction)")
-    print(f"• ML training after: 10 trades")
+    print(f"• Data Storage: Google Sheets")
+    print(f"• Auto-trading: ENABLED")
     print("="*80)
     
     app.run(
