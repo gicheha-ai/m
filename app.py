@@ -2,6 +2,7 @@
 EUR/USD 2-Minute Auto-Learning Trading System
 WITH 30-SECOND CACHING for API limit protection
 AND GIT REPOSITORY DATA STORAGE WITH AUTO-COMMIT
+Optimized for Render deployment with environment variables
 """
 
 import os
@@ -37,7 +38,8 @@ BASE_TRADE_SIZE = 1000.0
 MIN_CONFIDENCE = 65.0
 
 # ==================== GIT REPOSITORY CONFIGURATION ====================
-GITHUB_TOKEN = "ghp_6wTZ34xF2QYwr9ayh66GA1QzRj9y942b0tqU"
+# ⚠️ IMPORTANT: Use environment variables for production!
+GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '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')
 GITHUB_REPO_URL = "https://github.com/gicheha-ai/m.git"
 LOCAL_REPO_PATH = "m_repo"
 DATA_DIR = os.path.join(LOCAL_REPO_PATH, "data")
@@ -118,6 +120,10 @@ sl_labels = []
 ml_trained = False
 ml_initialized = False
 
+# Git sync management
+last_git_sync_time = 0
+GIT_SYNC_INTERVAL = 10  # Minimum seconds between syncs to prevent rate limiting
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -134,46 +140,67 @@ print(f"Cache Duration: {CACHE_DURATION} seconds (66% API reduction)")
 print(f"API Calls/Day: ~240 (SAFE for all free limits)")
 print(f"Data Storage: Git Repository with Auto-Commit")
 print(f"Git Repo: {GITHUB_REPO_URL}")
-print(f"Git Token: Configured with write access")
+print(f"Git Token: {'Configured' if GITHUB_TOKEN else 'NOT CONFIGURED - Check environment variables!'}")
+print(f"Render Deployment: Environment variables ready")
 print(f"Initial Balance: ${INITIAL_BALANCE:,.2f}")
 print(f"Trade Size: ${BASE_TRADE_SIZE:,.2f}")
 print("="*80)
 print("Starting system...")
 
-# ==================== GIT REPOSITORY AUTO-SYNC FUNCTIONS ====================
+# ==================== ENHANCED GIT REPOSITORY AUTO-SYNC FUNCTIONS ====================
 def setup_git_repository():
-    """Clone and setup Git repository with authentication"""
+    """Clone and setup Git repository with authentication for Render"""
     try:
-        # Remove existing repo if exists
+        # Check if token exists
+        if not GITHUB_TOKEN or GITHUB_TOKEN == 'your_token_here':
+            logger.error("❌ GitHub token not configured")
+            trading_state['data_storage'] = 'GIT_TOKEN_MISSING'
+            # Create directories anyway for local operation
+            os.makedirs(DATA_DIR, exist_ok=True)
+            logger.info("📁 Created local data directory (Git sync disabled)")
+            return False
+        
+        logger.info(f"🔑 GitHub token found: {GITHUB_TOKEN[:8]}...")
+        
+        # Remove existing repo if exists (clean slate for Render)
         if os.path.exists(LOCAL_REPO_PATH):
-            shutil.rmtree(LOCAL_REPO_PATH)
+            try:
+                shutil.rmtree(LOCAL_REPO_PATH)
+                logger.info("🗑️  Cleared existing repo directory")
+            except Exception as e:
+                logger.warning(f"⚠️  Could not remove existing repo: {e}")
         
         # Create authenticated Git URL
         auth_repo_url = GITHUB_REPO_URL.replace('https://', f'https://{GITHUB_TOKEN}@')
         
-        # Clone repository
-        logger.info(f"📦 Cloning repository: {GITHUB_REPO_URL}")
-        result = subprocess.run(
-            ['git', 'clone', auth_repo_url, LOCAL_REPO_PATH],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        
-        if result.returncode != 0:
-            logger.error(f"❌ Git clone failed: {result.stderr}")
-            
-            # Try to create directory and init if clone fails
-            os.makedirs(LOCAL_REPO_PATH, exist_ok=True)
-            os.makedirs(DATA_DIR, exist_ok=True)
-            
-            # Initialize git in directory
-            subprocess.run(['git', 'init'], cwd=LOCAL_REPO_PATH, capture_output=True)
-            subprocess.run(['git', 'remote', 'add', 'origin', auth_repo_url], 
-                          cwd=LOCAL_REPO_PATH, capture_output=True)
-            logger.warning("⚠️  Using initialized local repo (will try to push later)")
-        else:
-            logger.info("✅ Repository cloned successfully")
+        # Clone repository with retry logic
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"📦 Cloning repository (attempt {attempt + 1}/{max_retries})...")
+                result = subprocess.run(
+                    ['git', 'clone', auth_repo_url, LOCAL_REPO_PATH],
+                    capture_output=True,
+                    text=True,
+                    timeout=45
+                )
+                
+                if result.returncode == 0:
+                    logger.info("✅ Repository cloned successfully")
+                    break
+                else:
+                    logger.warning(f"⚠️  Clone attempt {attempt + 1} failed: {result.stderr[:100]}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2)
+                    else:
+                        raise Exception(f"Git clone failed after {max_retries} attempts: {result.stderr}")
+                        
+            except subprocess.TimeoutExpired:
+                logger.warning(f"⚠️  Clone timed out on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    time.sleep(3)
+                else:
+                    raise Exception("Git clone timeout after all retries")
         
         # Configure git
         subprocess.run(['git', 'config', 'user.email', 'trading-bot@gicheha-ai.com'], 
@@ -181,14 +208,31 @@ def setup_git_repository():
         subprocess.run(['git', 'config', 'user.name', 'Trading Bot'], 
                       cwd=LOCAL_REPO_PATH, capture_output=True)
         
-        # Pull latest changes
-        subprocess.run(['git', 'pull', 'origin', 'main'], 
-                      cwd=LOCAL_REPO_PATH, capture_output=True)
-        
         # Ensure data directory exists
         os.makedirs(DATA_DIR, exist_ok=True)
         
+        # Create initial files if they don't exist
+        if not os.path.exists(TRADES_FILE):
+            with open(TRADES_FILE, 'w') as f:
+                json.dump([], f)
+        
+        if not os.path.exists(TRAINING_FILE):
+            with open(TRAINING_FILE, 'w') as f:
+                json.dump({'features': [], 'tp_labels': [], 'sl_labels': []}, f)
+        
+        if not os.path.exists(STATE_FILE):
+            with open(STATE_FILE, 'w') as f:
+                json.dump({
+                    'balance': INITIAL_BALANCE,
+                    'total_trades': 0,
+                    'profitable_trades': 0,
+                    'win_rate': 0.0,
+                    'cycle_count': 0,
+                    'ml_model_ready': False
+                }, f)
+        
         trading_state['data_storage'] = 'GIT_REPO_READY'
+        logger.info("✅ Git repository setup complete")
         return True
         
     except Exception as e:
@@ -198,86 +242,174 @@ def setup_git_repository():
         # Create local directories as fallback
         os.makedirs(LOCAL_REPO_PATH, exist_ok=True)
         os.makedirs(DATA_DIR, exist_ok=True)
+        
+        # Create essential files
+        for file_path in [TRADES_FILE, TRAINING_FILE, STATE_FILE, CONFIG_FILE]:
+            if not os.path.exists(file_path):
+                with open(file_path, 'w') as f:
+                    if 'trades' in file_path:
+                        json.dump([], f)
+                    elif 'training' in file_path:
+                        json.dump({'features': [], 'tp_labels': [], 'sl_labels': []}, f)
+                    elif 'state' in file_path:
+                        json.dump({
+                            'balance': INITIAL_BALANCE,
+                            'total_trades': 0,
+                            'profitable_trades': 0,
+                            'win_rate': 0.0,
+                            'cycle_count': 0,
+                            'ml_model_ready': False
+                        }, f)
+                    elif 'config' in file_path:
+                        json.dump({
+                            'cycle_duration': CYCLE_SECONDS,
+                            'initial_balance': INITIAL_BALANCE,
+                            'trade_size': BASE_TRADE_SIZE,
+                            'min_confidence': MIN_CONFIDENCE,
+                            'cache_duration': CACHE_DURATION,
+                            'git_repo': GITHUB_REPO_URL
+                        }, f)
+        
+        logger.info("📁 Created local fallback data directory")
         return False
 
-def git_commit_and_push(message="Auto-commit trading data"):
-    """Commit changes and push to GitHub"""
+def git_auto_pull():
+    """Auto-pull latest data from GitHub before operations"""
     try:
-        # Add all files
-        subprocess.run(['git', 'add', '.'], 
+        if not os.path.exists(LOCAL_REPO_PATH) or not GITHUB_TOKEN:
+            return False
+        
+        logger.info("🔄 Auto-pulling latest data from Git...")
+        
+        # Configure git if needed
+        subprocess.run(['git', 'config', 'user.email', 'trading-bot@gicheha-ai.com'], 
+                      cwd=LOCAL_REPO_PATH, capture_output=True)
+        subprocess.run(['git', 'config', 'user.name', 'Trading Bot'], 
                       cwd=LOCAL_REPO_PATH, capture_output=True)
         
-        # Check if there are changes
-        result = subprocess.run(['git', 'status', '--porcelain'], 
-                               cwd=LOCAL_REPO_PATH, capture_output=True, text=True)
-        
-        if result.stdout.strip():
-            # Commit changes
-            commit_result = subprocess.run(
-                ['git', 'commit', '-m', f'{message} - {datetime.now().isoformat()}'],
-                cwd=LOCAL_REPO_PATH,
-                capture_output=True,
-                text=True
-            )
-            
-            if commit_result.returncode == 0:
-                # Push to GitHub
-                push_result = subprocess.run(
-                    ['git', 'push', 'origin', 'main'],
-                    cwd=LOCAL_REPO_PATH,
-                    capture_output=True,
-                    text=True,
-                    timeout=30
-                )
-                
-                if push_result.returncode == 0:
-                    trading_state['git_last_commit'] = datetime.now().strftime('%H:%M:%S')
-                    trading_state['git_commit_count'] += 1
-                    logger.info(f"✅ Git commit & push successful: {message}")
-                    return True
-                else:
-                    logger.warning(f"⚠️  Git push failed: {push_result.stderr}")
-                    return False
-            else:
-                logger.warning(f"⚠️  Git commit failed: {commit_result.stderr}")
-                return False
-        else:
-            return True  # No changes to commit
-            
-    except Exception as e:
-        logger.error(f"❌ Git commit/push error: {e}")
-        return False
-
-def git_pull_latest():
-    """Pull latest changes from GitHub"""
-    try:
-        result = subprocess.run(
-            ['git', 'pull', 'origin', 'main'],
+        # Pull latest changes
+        pull_result = subprocess.run(
+            ['git', 'pull', 'origin', 'main', '--rebase'],
             cwd=LOCAL_REPO_PATH,
             capture_output=True,
             text=True,
             timeout=30
         )
         
-        if result.returncode == 0:
+        if pull_result.returncode == 0:
             logger.info("✅ Git pull successful")
             return True
         else:
-            logger.warning(f"⚠️  Git pull failed: {result.stderr}")
+            logger.warning(f"⚠️  Git pull failed: {pull_result.stderr[:100]}")
             return False
             
     except Exception as e:
         logger.error(f"❌ Git pull error: {e}")
         return False
 
-# ==================== DATA PERSISTENCE FUNCTIONS ====================
+def git_smart_commit_and_push(commit_message="Auto-commit trading data"):
+    """Smart Git commit with rate limiting and conflict resolution"""
+    global last_git_sync_time
+    
+    try:
+        current_time = time.time()
+        
+        # Rate limiting: don't sync too frequently
+        if current_time - last_git_sync_time < GIT_SYNC_INTERVAL:
+            logger.debug(f"⏸️  Rate limited: waiting {GIT_SYNC_INTERVAL}s between syncs")
+            return {'success': True, 'message': 'Rate limited, saved locally'}
+        
+        if not os.path.exists(LOCAL_REPO_PATH) or not GITHUB_TOKEN:
+            return {'success': False, 'message': 'Git not initialized'}
+        
+        # Always pull first to avoid conflicts
+        git_auto_pull()
+        
+        # Add all files
+        add_result = subprocess.run(
+            ['git', 'add', '.'],
+            cwd=LOCAL_REPO_PATH,
+            capture_output=True,
+            text=True
+        )
+        
+        # Check if there are changes
+        status_result = subprocess.run(
+            ['git', 'status', '--porcelain'],
+            cwd=LOCAL_REPO_PATH,
+            capture_output=True,
+            text=True
+        )
+        
+        if not status_result.stdout.strip():
+            logger.debug("📭 No changes to commit")
+            return {'success': True, 'message': 'No changes'}
+        
+        # Commit changes
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        commit_result = subprocess.run(
+            ['git', 'commit', '-m', f'{commit_message} - {timestamp}'],
+            cwd=LOCAL_REPO_PATH,
+            capture_output=True,
+            text=True
+        )
+        
+        if commit_result.returncode != 0:
+            logger.warning(f"⚠️  Git commit failed: {commit_result.stderr[:100]}")
+            
+            # Try to stash and apply
+            subprocess.run(['git', 'stash'], cwd=LOCAL_REPO_PATH, capture_output=True)
+            git_auto_pull()
+            subprocess.run(['git', 'stash', 'pop'], cwd=LOCAL_REPO_PATH, capture_output=True)
+            
+            # Retry commit
+            commit_result = subprocess.run(
+                ['git', 'commit', '-m', f'{commit_message} (retry) - {timestamp}'],
+                cwd=LOCAL_REPO_PATH,
+                capture_output=True,
+                text=True
+            )
+            
+            if commit_result.returncode != 0:
+                return {'success': False, 'message': 'Commit failed after retry'}
+        
+        # Push to GitHub
+        push_result = subprocess.run(
+            ['git', 'push', 'origin', 'main'],
+            cwd=LOCAL_REPO_PATH,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if push_result.returncode == 0:
+            last_git_sync_time = current_time
+            trading_state['git_last_commit'] = datetime.now().strftime('%H:%M:%S')
+            trading_state['git_commit_count'] += 1
+            trading_state['data_storage'] = 'GIT_SYNC_SUCCESS'
+            
+            logger.info(f"✅ Git sync successful: {commit_message}")
+            return {'success': True, 'message': 'Sync successful'}
+        else:
+            logger.warning(f"⚠️  Git push failed: {push_result.stderr[:100]}")
+            trading_state['data_storage'] = 'GIT_PUSH_FAILED'
+            return {'success': False, 'message': 'Push failed'}
+            
+    except Exception as e:
+        logger.error(f"❌ Git sync error: {e}")
+        trading_state['data_storage'] = f'GIT_ERROR: {str(e)[:50]}'
+        return {'success': False, 'error': str(e)}
+
+# ==================== DATA PERSISTENCE WITH GIT AUTO-SYNC ====================
 def load_all_data_from_git():
-    """Load all data from Git repository files"""
+    """Load all data from Git repository files with auto-pull"""
     global trade_history, ml_features, tp_labels, sl_labels
     
     try:
-        # Pull latest data first
-        git_pull_latest()
+        logger.info("📂 Loading data from Git repository...")
+        
+        # Auto-pull latest data first
+        git_auto_pull()
         
         # Load trades
         trade_history = []
@@ -336,8 +468,10 @@ def load_all_data_from_git():
         return False
 
 def save_all_data_to_git():
-    """Save all data to Git repository files"""
+    """Save all data to Git repository files with auto-sync"""
     try:
+        logger.debug("💾 Saving all data to Git...")
+        
         # Save trades
         with open(TRADES_FILE, 'w') as f:
             json.dump(trade_history, f, indent=2, default=str)
@@ -377,44 +511,59 @@ def save_all_data_to_git():
                 'min_confidence': MIN_CONFIDENCE,
                 'cache_duration': CACHE_DURATION,
                 'system_version': '2.0-git-auto-sync',
+                'git_repo': GITHUB_REPO_URL,
+                'git_token_configured': bool(GITHUB_TOKEN),
                 'last_saved': datetime.now().isoformat()
             }, f, indent=2)
         
-        # Commit and push to GitHub
-        git_commit_and_push("Trading data update")
+        # Auto-commit and push to GitHub
+        sync_result = git_smart_commit_and_push("Trading data update")
         
-        logger.info("💾 All data saved to Git repository")
-        return True
+        if sync_result.get('success'):
+            logger.info("✅ All data saved and synced to Git repository")
+        else:
+            logger.warning(f"⚠️  Data saved locally but Git sync failed: {sync_result.get('message')}")
+        
+        return sync_result
         
     except Exception as e:
         logger.error(f"❌ Error saving data to Git: {e}")
-        return False
+        return {'success': False, 'error': str(e)}
 
 def save_trade_to_git(trade_data):
-    """Save individual trade to Git repository"""
+    """Save individual trade to Git repository with auto-sync"""
     global trade_history
     
     try:
+        logger.info(f"💾 Saving trade #{trade_data.get('id', 'N/A')} to Git...")
+        
         # Add trade to history
         trade_history.append(trade_data)
         
-        # Save all data (trades + training + state)
-        save_all_data_to_git()
+        # Save all data (trades + training + state) WITH AUTO-SYNC
+        save_result = save_all_data_to_git()
         
-        logger.info(f"✅ Trade #{trade_data.get('id', 'N/A')} saved to Git")
-        return {'success': True, 'message': 'Trade saved to Git repository'}
+        if save_result.get('success'):
+            logger.info(f"✅ Trade #{trade_data.get('id', 'N/A')} saved and synced to Git")
+            return {'success': True, 'message': 'Trade saved and synced to Git repository'}
+        else:
+            logger.warning(f"⚠️  Trade saved locally but Git sync failed: {save_result.get('message')}")
+            return {'success': False, 'message': 'Trade saved locally but Git sync failed'}
         
     except Exception as e:
         logger.error(f"❌ Error saving trade to Git: {e}")
         return {'success': False, 'error': str(e)}
 
-# ==================== ML TRAINING SYSTEM ====================
+# ==================== ML TRAINING SYSTEM WITH GIT SYNC ====================
 def initialize_ml_system():
-    """Initialize ML system - train if enough data exists"""
+    """Initialize ML system - train if enough data exists with Git sync"""
     global ml_trained, ml_initialized
     
     try:
-        logger.info("🤖 Initializing ML system...")
+        logger.info("🤖 Initializing ML system with Git sync...")
+        
+        # Auto-pull latest ML data
+        git_auto_pull()
         
         # Check if we have enough training data
         if len(ml_features) >= 10:
@@ -446,10 +595,12 @@ def initialize_ml_system():
         return False
 
 def extract_features_from_historical_trades():
-    """Extract ML features from historical trades"""
+    """Extract ML features from historical trades with Git sync"""
     global ml_features, tp_labels, sl_labels
     
     try:
+        logger.info("📊 Extracting ML features from historical trades...")
+        
         for trade in trade_history:
             if trade.get('status') == 'CLOSED' and trade.get('result') in ['SUCCESS', 'FAILED']:
                 # Extract features similar to learn_from_trade
@@ -475,11 +626,15 @@ def extract_features_from_historical_trades():
         
         logger.info(f"📊 Extracted {len(ml_features)} features from historical trades")
         
+        # Save extracted features to Git
+        if ml_features:
+            save_all_data_to_git()
+        
     except Exception as e:
         logger.error(f"❌ Error extracting features from trades: {e}")
 
 def train_ml_models():
-    """Train ML models for TP/SL optimization"""
+    """Train ML models for TP/SL optimization with Git sync"""
     global tp_model, sl_model, ml_scaler, ml_trained
     
     if len(ml_features) < 5:  # Lower threshold for initial training
@@ -488,6 +643,8 @@ def train_ml_models():
         return
     
     try:
+        logger.info("🤖 Training ML models...")
+        
         X = np.array(ml_features)
         y_tp = np.array(tp_labels)
         y_sl = np.array(sl_labels)
@@ -505,7 +662,7 @@ def train_ml_models():
         trading_state['ml_model_ready'] = True
         logger.info(f"🤖 ML models trained on {len(X)} samples")
         
-        # Save training data to Git
+        # Save training data to Git with auto-sync
         save_all_data_to_git()
         
     except Exception as e:
@@ -514,7 +671,7 @@ def train_ml_models():
         trading_state['ml_model_ready'] = False
 
 def predict_optimal_levels(features, direction, current_price, df):
-    """Predict optimal TP and SL levels for 2-minute trades"""
+    """Predict optimal TP and SL levels for 2-minute trades with ML"""
     
     # Base levels for 2-minute trades
     if direction == "BULLISH":
@@ -906,9 +1063,9 @@ def analyze_2min_prediction(df, current_price):
         logger.error(f"❌ Prediction error: {e}")
         return 0.5, 50, 'ERROR', 1
 
-# ==================== TRADE EXECUTION ====================
+# ==================== TRADE EXECUTION WITH GIT AUTO-SYNC ====================
 def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal_sl, tp_pips, sl_pips, signal_strength):
-    """Execute a trade at the beginning of the 2-minute cycle"""
+    """Execute a trade at the beginning of the 2-minute cycle with Git auto-sync"""
     
     if direction == 'NEUTRAL' or confidence < MIN_CONFIDENCE:
         trading_state['action'] = 'WAIT'
@@ -949,6 +1106,7 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
         'cycle_duration': CYCLE_SECONDS,
         'signal_strength': signal_strength,
         'data_stored_in': GITHUB_REPO_URL,
+        'git_synced': True,
         'ml_used': ml_trained
     }
     
@@ -961,10 +1119,16 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
     trading_state['trade_status'] = 'ACTIVE'
     trading_state['signal_strength'] = signal_strength
     
-    # Save to Git repository
-    save_trade_to_git(trade)
+    # Save to Git repository WITH AUTO-SYNC
+    save_result = save_trade_to_git(trade)
     
-    logger.info(f"🔔 {action} ORDER EXECUTED")
+    if save_result.get('success'):
+        logger.info(f"🔔 {action} ORDER EXECUTED AND SYNCED TO GIT")
+        trade['git_sync_status'] = 'synced'
+    else:
+        logger.warning(f"🔔 {action} ORDER EXECUTED (Git sync failed)")
+        trade['git_sync_status'] = 'failed'
+    
     logger.info(f"   Trade ID: {trade['id']}")
     logger.info(f"   Entry Price: {current_price:.5f}")
     logger.info(f"   Take Profit: {optimal_tp:.5f} ({tp_pips} pips)")
@@ -972,12 +1136,12 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
     logger.info(f"   Confidence: {confidence:.1f}%")
     logger.info(f"   ML Used: {ml_trained}")
     logger.info(f"   Goal: Hit TP ({tp_pips} pips) before SL ({sl_pips} pips) in {CYCLE_SECONDS} seconds")
-    logger.info(f"   Data Storage: Saved to Git repository")
+    logger.info(f"   Git Sync: {'✅ Successful' if trade.get('git_sync_status') == 'synced' else '⚠️ Failed'}")
     
     return trade
 
 def monitor_active_trade(current_price):
-    """Monitor the active trade throughout the 2-minute cycle"""
+    """Monitor the active trade throughout the 2-minute cycle with Git sync"""
     if not trading_state['current_trade']:
         return None
     
@@ -1067,8 +1231,13 @@ def monitor_active_trade(current_price):
         # Learn from this trade
         learn_from_trade(trade, current_price)
         
-        # Save all data to Git
-        save_all_data_to_git()
+        # Save all data to Git WITH AUTO-SYNC
+        save_result = save_all_data_to_git()
+        
+        if save_result.get('success'):
+            logger.info("✅ Trade closed and data synced to Git")
+        else:
+            logger.warning(f"⚠️  Trade closed but Git sync failed: {save_result.get('message')}")
         
         # Clear current trade
         trading_state['current_trade'] = None
@@ -1081,7 +1250,7 @@ def monitor_active_trade(current_price):
     return trade
 
 def learn_from_trade(trade, current_price):
-    """Learn from trade result and update ML training data"""
+    """Learn from trade result and update ML training data with Git sync"""
     try:
         if 'result' not in trade or trade['result'] == 'PENDING':
             return
@@ -1117,14 +1286,15 @@ def learn_from_trade(trade, current_price):
         tp_labels.append(optimal_tp)
         sl_labels.append(optimal_sl)
         
-        # Save training data to Git
-        save_all_data_to_git()
+        # Save training data to Git with auto-sync
+        if len(ml_features) % 3 == 0:  # Save every 3 trades to avoid too many commits
+            save_all_data_to_git()
+        
+        logger.info(f"📚 Learned from trade #{trade['id']}: {trade['result']}")
         
         # Retrain if we have enough samples
         if len(ml_features) >= 5 and len(ml_features) % 3 == 0:
             train_ml_models()
-        
-        logger.info(f"📚 Learned from trade #{trade['id']}: {trade['result']}")
         
     except Exception as e:
         logger.error(f"❌ Learning error: {e}")
@@ -1248,13 +1418,13 @@ def create_trading_chart(prices, current_trade, next_cycle):
         logger.error(f"❌ Chart error: {e}")
         return None
 
-# ==================== MAIN 2-MINUTE CYCLE ====================
+# ==================== MAIN 2-MINUTE CYCLE WITH GIT AUTO-SYNC ====================
 def trading_cycle():
-    """Main 2-minute trading cycle with caching and Git sync"""
+    """Main 2-minute trading cycle with Git auto-sync"""
     global trading_state
     
     # Initialize Git repository and load data
-    logger.info("🔄 Initializing Git repository...")
+    logger.info("🔄 Initializing Git repository and loading data...")
     setup_git_repository()
     load_all_data_from_git()
     
@@ -1267,6 +1437,8 @@ def trading_cycle():
     logger.info("✅ Trading bot started with 2-minute cycles and Git auto-sync")
     logger.info(f"📊 Starting with {len(trade_history)} historical trades")
     logger.info(f"🤖 ML Ready: {ml_trained} ({len(ml_features)} samples)")
+    logger.info(f"🔗 Git Status: {trading_state['data_storage']}")
+    logger.info(f"💾 Git Commits: {trading_state['git_commit_count']}")
     
     while True:
         try:
@@ -1370,7 +1542,7 @@ def trading_cycle():
             logger.info(f"  Win Rate: {trading_state['win_rate']:.1f}%")
             logger.info(f"  ML Ready: {ml_trained} ({len(ml_features)} samples)")
             logger.info(f"  Cache Efficiency: {trading_state['cache_efficiency']}")
-            logger.info(f"  Data Storage: Git Repository (Auto-Sync)")
+            logger.info(f"  Data Storage: {trading_state['data_storage']}")
             logger.info(f"  Git Commits: {trading_state['git_commit_count']}")
             logger.info(f"  Last Commit: {trading_state['git_last_commit']}")
             logger.info(f"  Next cycle in: {next_cycle_time}s")
@@ -1441,7 +1613,9 @@ def get_trade_history():
             'git_repo': GITHUB_REPO_URL,
             'storage_file': TRADES_FILE,
             'ml_samples': len(ml_features),
-            'ml_trained': ml_trained
+            'ml_trained': ml_trained,
+            'git_commits': trading_state['git_commit_count'],
+            'last_commit': trading_state['git_last_commit']
         })
     except Exception as e:
         logger.error(f"❌ Trade history error: {e}")
@@ -1455,8 +1629,9 @@ def get_ml_status():
         'training_samples': len(ml_features),
         'training_file': TRAINING_FILE,
         'last_trained': trading_state['last_update'],
-        'data_storage': 'Git Repository (Auto-Sync)',
-        'using_ml_for_predictions': ml_trained and len(ml_features) >= 5
+        'data_storage': trading_state['data_storage'],
+        'using_ml_for_predictions': ml_trained and len(ml_features) >= 5,
+        'git_sync_status': trading_state['data_storage']
     })
 
 @app.route('/api/cache_status')
@@ -1472,6 +1647,72 @@ def get_cache_status():
         'source': price_cache['source'],
         'api_calls_today': '~240 (66% reduction)'
     })
+
+@app.route('/api/git_status')
+def get_git_status():
+    """Get detailed Git repository status"""
+    try:
+        # Check if repo exists
+        if not os.path.exists(LOCAL_REPO_PATH):
+            return jsonify({
+                'status': 'no_repo',
+                'message': 'Repository not initialized',
+                'git_token_configured': bool(GITHUB_TOKEN),
+                'data_storage': trading_state['data_storage']
+            })
+        
+        # Get git status
+        status_result = subprocess.run(
+            ['git', 'status', '--porcelain'],
+            cwd=LOCAL_REPO_PATH,
+            capture_output=True,
+            text=True
+        )
+        
+        # Get last commit
+        log_result = subprocess.run(
+            ['git', 'log', '-1', '--format=%H|%s|%cd', '--date=short'],
+            cwd=LOCAL_REPO_PATH,
+            capture_output=True,
+            text=True
+        )
+        
+        last_commit = {}
+        if log_result.returncode == 0 and log_result.stdout.strip():
+            parts = log_result.stdout.strip().split('|')
+            if len(parts) >= 3:
+                last_commit = {
+                    'hash': parts[0][:8],
+                    'message': parts[1],
+                    'date': parts[2]
+                }
+        
+        return jsonify({
+            'status': 'active',
+            'repo_path': LOCAL_REPO_PATH,
+            'data_dir': DATA_DIR,
+            'has_changes': bool(status_result.stdout.strip()),
+            'changes_count': len(status_result.stdout.strip().split('\n')) if status_result.stdout.strip() else 0,
+            'last_commit': last_commit,
+            'current_branch': 'main',
+            'git_commits': trading_state['git_commit_count'],
+            'data_storage': trading_state['data_storage'],
+            'git_token_configured': bool(GITHUB_TOKEN),
+            'git_repo': GITHUB_REPO_URL,
+            'files': {
+                'trades.json': os.path.exists(TRADES_FILE),
+                'state.json': os.path.exists(STATE_FILE),
+                'training_data.json': os.path.exists(TRAINING_FILE),
+                'config.json': os.path.exists(CONFIG_FILE)
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'data_storage': trading_state['data_storage']
+        }), 500
 
 @app.route('/api/reset_trading', methods=['POST'])
 def reset_trading():
@@ -1515,14 +1756,15 @@ def health_check():
         'cache_enabled': True,
         'cache_duration': CACHE_DURATION,
         'api_calls_per_day': '~240 (SAFE)',
-        'data_storage': 'Git Repository (Auto-Sync)',
+        'data_storage': trading_state['data_storage'],
         'git_repo': GITHUB_REPO_URL,
         'git_commits': trading_state['git_commit_count'],
         'last_commit': trading_state['git_last_commit'],
         'ml_ready': ml_trained,
         'ml_samples': len(ml_features),
         'trades_in_history': len(trade_history),
-        'version': '2.0-git-auto-sync'
+        'git_token_configured': bool(GITHUB_TOKEN),
+        'version': '2.0-git-auto-sync-render'
     })
 
 @app.route('/api/storage_status')
@@ -1546,7 +1788,7 @@ def get_storage_status():
         logger.error(f"❌ Storage status error: {e}")
     
     return jsonify({
-        'data_storage': 'Git Repository (Auto-Sync)',
+        'data_storage': trading_state['data_storage'],
         'git_repo': GITHUB_REPO_URL,
         'data_directory': DATA_DIR,
         'files': files,
@@ -1554,29 +1796,37 @@ def get_storage_status():
         'training_samples': len(ml_features),
         'git_commits': trading_state['git_commit_count'],
         'last_commit': trading_state['git_last_commit'],
-        'ml_trained': ml_trained
+        'ml_trained': ml_trained,
+        'git_token_configured': bool(GITHUB_TOKEN)
     })
 
 @app.route('/api/sync_now', methods=['POST'])
 def sync_now():
     """Force sync with Git repository"""
     try:
-        if git_pull_latest():
-            load_all_data_from_git()
+        # Auto-pull first
+        git_auto_pull()
+        
+        # Then sync
+        sync_result = git_smart_commit_and_push("Manual sync triggered")
+        
+        if sync_result.get('success'):
             return jsonify({
                 'success': True, 
                 'message': 'Synced with Git repository',
                 'trades_loaded': len(trade_history),
-                'ml_samples': len(ml_features)
+                'ml_samples': len(ml_features),
+                'git_commits': trading_state['git_commit_count'],
+                'last_commit': trading_state['git_last_commit']
             })
         else:
-            return jsonify({'success': False, 'message': 'Git sync failed'}), 500
+            return jsonify({'success': False, 'message': sync_result.get('message', 'Git sync failed')}), 500
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # ==================== START TRADING BOT ====================
 def start_trading_bot():
-    """Start the trading bot"""
+    """Start the trading bot with Git auto-sync"""
     try:
         thread = threading.Thread(target=trading_cycle, daemon=True)
         thread.start()
@@ -1585,8 +1835,10 @@ def start_trading_bot():
         print(f"✅ Caching: {CACHE_DURATION}-second cache enabled")
         print(f"✅ Data Storage: Git Repository with Auto-Commit")
         print(f"✅ Git Repo: {GITHUB_REPO_URL}")
+        print(f"✅ Git Token: {'✅ Configured' if GITHUB_TOKEN else '❌ NOT CONFIGURED'}")
         print(f"✅ ML Training: Automatic ({len(ml_features)} samples loaded)")
         print(f"✅ Git Commits: {trading_state['git_commit_count']}")
+        print(f"✅ Git Status: {trading_state['data_storage']}")
     except Exception as e:
         logger.error(f"❌ Error starting trading bot: {e}")
         print(f"❌ Error: {e}")
@@ -1600,13 +1852,15 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"🌐 Web dashboard: http://localhost:{port}")
     print("="*80)
-    print("GIT AUTO-SYNC SYSTEM READY")
+    print("GIT AUTO-SYNC SYSTEM READY FOR RENDER DEPLOYMENT")
     print(f"• 2-minute cycles with {CACHE_DURATION}-second caching")
     print(f"• Data Storage: Git Repository with Auto-Commit")
     print(f"• Git Repo: {GITHUB_REPO_URL}")
+    print(f"• Git Token: Environment variable ready")
     print(f"• ML Training: Auto-train when enough data")
     print(f"• Data survives: Redeploys, Sleep, Restarts")
-    print(f"• Auto-sync: Commits after every trade")
+    print(f"• Auto-sync: After every trade with rate limiting")
+    print(f"• Auto-pull: Before ML training and operations")
     print("="*80)
     
     app.run(
