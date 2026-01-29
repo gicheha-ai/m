@@ -1,6 +1,6 @@
 /**
  * EUR/USD Trading System - Main JavaScript Module
- * Fixed for 2-Minute Cycles with Git Repository Storage
+ * Git Repository Storage with Auto-Commit
  */
 
 // Configuration
@@ -18,7 +18,7 @@ let isAutoRefreshEnabled = true;
 
 // Initialize when page loads
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('EUR/USD 2-Minute Trading System Initialized (Git Storage)');
+    console.log('EUR/USD 2-Minute Trading System with Git Auto-Sync Initialized');
     
     // Initialize systems
     initializeDashboard();
@@ -30,6 +30,7 @@ document.addEventListener('DOMContentLoaded', function() {
     fetchTradingState();
     fetchTradeHistory();
     fetchStorageStatus();
+    fetchMLStatus(); // NEW: Fetch ML status on load
     
     // Start auto-refresh
     startAutoRefresh();
@@ -42,10 +43,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Initialize dashboard elements
 function initializeDashboard() {
-    console.log('Dashboard initialized (2-Minute Cycles with Git Storage)');
+    console.log('Dashboard initialized (Git Auto-Sync)');
     
     // Set initial values
-    updateSystemStatus('Initializing...', 'warning');
+    updateSystemStatus('Initializing Git Sync...', 'warning');
     updateAutoRefreshStatus(true);
     
     // Set cycle duration displays
@@ -55,14 +56,21 @@ function initializeDashboard() {
     // Update data storage info
     updateElementText('dataStorage', `
         <span class="badge bg-info">
-            <i class="bi bi-git"></i> Git Repository
+            <i class="bi bi-git"></i> Git Auto-Sync
         </span>
+    `);
+    
+    // Initialize Git sync info
+    updateElementText('gitSyncInfo', `
+        <div class="small text-muted">
+            <i class="bi bi-arrow-repeat"></i> Syncing with GitHub...
+        </div>
     `);
 }
 
 // Set up all event listeners
 function setupEventListeners() {
-    console.log('Setting up event listeners...');
+    console.log('Setting up event listeners for Git Auto-Sync...');
     
     // Refresh button
     const refreshBtn = document.getElementById('refreshBtn');
@@ -72,6 +80,7 @@ function setupEventListeners() {
             fetchTradingState();
             fetchTradeHistory();
             fetchStorageStatus();
+            fetchMLStatus(); // NEW: Also fetch ML status
             showToast('Data refreshed manually', 'info');
         });
     }
@@ -110,6 +119,14 @@ function setupEventListeners() {
             // Chart fullscreen handled by charts.js
         });
     }
+    
+    // NEW: Sync Now button
+    const syncNowBtn = document.getElementById('syncNowBtn');
+    if (syncNowBtn) {
+        syncNowBtn.addEventListener('click', function() {
+            syncWithGit();
+        });
+    }
 }
 
 // Fetch current trading state from API
@@ -128,11 +145,34 @@ function fetchTradingState() {
             updateDashboard(data);
             updateSystemStatus('Active', 'success');
             lastUpdateTime = new Date();
+            
+            // Update Git sync info if available
+            if (data.git_last_commit || data.git_commit_count) {
+                updateGitSyncInfo(data);
+            }
         })
         .catch(error => {
             console.error('Error fetching trading state:', error);
             updateSystemStatus('Connection Error', 'danger');
             showToast('Failed to fetch trading data', 'error');
+        });
+}
+
+// NEW: Fetch ML status
+function fetchMLStatus() {
+    fetch('/api/ml_status')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log('ML status received:', data);
+            updateMLStatusDisplay(data);
+        })
+        .catch(error => {
+            console.error('Error fetching ML status:', error);
         });
 }
 
@@ -148,6 +188,11 @@ function fetchTradeHistory() {
         .then(data => {
             console.log('Trade history received:', data.trades ? data.trades.length : 0, 'trades');
             updateTradeHistory(data);
+            
+            // Update ML info if available in trade history
+            if (data.ml_samples !== undefined) {
+                updateElementText('mlSamplesCount', data.ml_samples);
+            }
         })
         .catch(error => {
             console.error('Error fetching trade history:', error);
@@ -170,6 +215,37 @@ function fetchStorageStatus() {
         .catch(error => {
             console.error('Error fetching storage status:', error);
         });
+}
+
+// NEW: Sync with Git repository
+function syncWithGit() {
+    fetch('/api/sync_now', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            showToast('Synced with Git repository!', 'success');
+            fetchTradingState();
+            fetchTradeHistory();
+            fetchStorageStatus();
+            fetchMLStatus();
+        } else {
+            showToast('Git sync failed', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error syncing with Git:', error);
+        showToast('Error syncing with Git', 'error');
+    });
 }
 
 // Update dashboard with new data
@@ -217,11 +293,23 @@ function updateDashboard(data) {
     // Update data storage status
     const dataStorage = document.getElementById('dataStorage');
     if (dataStorage) {
-        const storageType = data.data_storage || 'GIT_REPO';
+        const storageType = data.data_storage || 'GIT_REPO_SYNCING';
+        let badgeClass = 'bg-info';
+        let icon = 'bi-git';
+        let text = 'Git Auto-Sync';
+        
+        if (storageType.includes('READY')) {
+            badgeClass = 'bg-success';
+            text = 'Git Auto-Sync Ready';
+        } else if (storageType.includes('ERROR')) {
+            badgeClass = 'bg-danger';
+            text = 'Git Sync Error';
+        }
+        
         dataStorage.innerHTML = `
-            <span class="badge ${storageType.includes('READY') ? 'bg-success' : 'bg-warning'}">
-                <i class="bi ${storageType.includes('GIT') ? 'bi-git' : 'bi-hdd'}"></i>
-                ${storageType.includes('GIT') ? 'Git Repository' : storageType}
+            <span class="badge ${badgeClass}">
+                <i class="bi ${icon}"></i>
+                ${text}
             </span>
         `;
     }
@@ -275,8 +363,10 @@ function updateDashboard(data) {
     // Update ML status
     const mlReady = document.getElementById('mlReady');
     if (mlReady) {
-        mlReady.textContent = data.ml_model_ready ? 'Yes' : 'No';
-        mlReady.className = `badge ${data.ml_model_ready ? 'bg-success' : 'bg-warning'}`;
+        const isReady = data.ml_model_ready || false;
+        mlReady.textContent = isReady ? 'Yes' : 'No';
+        mlReady.className = `badge ${isReady ? 'bg-success' : 'bg-warning'}`;
+        mlReady.title = isReady ? 'ML is trained and making predictions' : 'ML needs more data';
     }
     
     // Update TP/SL levels
@@ -311,6 +401,14 @@ function updateDashboard(data) {
         `);
     }
     
+    // Update cache efficiency
+    if (data.cache_efficiency) {
+        const cacheEfficiency = document.getElementById('cacheEfficiency');
+        if (cacheEfficiency) {
+            cacheEfficiency.textContent = data.cache_efficiency;
+        }
+    }
+    
     // Update chart if available
     if (typeof updateChartFromState === 'function') {
         updateChartFromState(data);
@@ -319,6 +417,53 @@ function updateDashboard(data) {
     // Update price history if available
     if (typeof updatePriceHistory === 'function' && data.price_history && Array.isArray(data.price_history)) {
         updatePriceHistory(data.price_history);
+    }
+}
+
+// NEW: Update Git sync information
+function updateGitSyncInfo(data) {
+    const gitSyncInfo = document.getElementById('gitSyncInfo');
+    if (gitSyncInfo && (data.git_last_commit || data.git_commit_count)) {
+        const lastCommit = data.git_last_commit || 'Never';
+        const commitCount = data.git_commit_count || 0;
+        
+        gitSyncInfo.innerHTML = `
+            <div class="small text-success">
+                <i class="bi bi-git"></i> Last Commit: ${lastCommit}
+                <br>
+                <i class="bi bi-hash"></i> Total Commits: ${commitCount}
+            </div>
+        `;
+    }
+}
+
+// NEW: Update ML status display
+function updateMLStatusDisplay(mlData) {
+    const mlStatusContainer = document.getElementById('mlStatusContainer');
+    if (mlStatusContainer) {
+        const isTrained = mlData.ml_model_ready || false;
+        const samples = mlData.training_samples || 0;
+        const usingML = mlData.using_ml_for_predictions || false;
+        
+        mlStatusContainer.innerHTML = `
+            <div class="small ${isTrained ? 'text-success' : 'text-warning'}">
+                <i class="bi bi-cpu"></i> ML Status: ${isTrained ? 'TRAINED' : 'TRAINING'}
+                <br>
+                <i class="bi bi-database"></i> Samples: ${samples}
+                <br>
+                <i class="bi bi-lightbulb"></i> Predictions: ${usingML ? 'Using ML' : 'Using Indicators'}
+            </div>
+        `;
+    }
+    
+    // Also update ML samples count if element exists
+    updateElementText('mlSamplesCount', samples);
+    
+    // Update footer with ML status
+    const mlFooterStatus = document.getElementById('mlFooterStatus');
+    if (mlFooterStatus) {
+        mlFooterStatus.textContent = isTrained ? 'ML Active' : 'ML Learning';
+        mlFooterStatus.className = `badge ${isTrained ? 'bg-success' : 'bg-warning'}`;
     }
 }
 
@@ -341,6 +486,7 @@ function updateActiveTrade(trade) {
     const duration = trade.duration_seconds || 0;
     const timeRemaining = Math.max(0, CYCLE_DURATION - duration);
     const profitPercent = trade.profit_amount ? ((trade.profit_amount / trade.trade_size) * 100).toFixed(3) : '0.000';
+    const mlUsed = trade.ml_used || false;
     
     // Calculate progress percentage (based on 120 seconds)
     const progressPercent = Math.min(100, (duration / CYCLE_DURATION) * 100);
@@ -351,6 +497,12 @@ function updateActiveTrade(trade) {
                 <i class="bi ${trade.action === 'BUY' ? 'bi-arrow-up-circle' : 'bi-arrow-down-circle'}"></i>
                 ${trade.action} #${trade.id}
             </h5>
+            
+            ${mlUsed ? `
+            <div class="small text-info mb-2">
+                <i class="bi bi-cpu"></i> ML-Optimized Trade
+            </div>
+            ` : ''}
             
             <div class="row text-start mt-3">
                 <div class="col-6"><small>Entry Price:</small></div>
@@ -399,7 +551,7 @@ function updateActiveTrade(trade) {
             
             ${trade.data_stored_in ? `
             <div class="small text-info mt-2">
-                <i class="bi bi-git"></i> Stored in Git repository
+                <i class="bi bi-git"></i> Auto-saved to Git
             </div>
             ` : ''}
         </div>
@@ -416,8 +568,8 @@ function updateTradeHistory(data) {
                 <td colspan="11" class="text-center py-4">
                     <i class="bi bi-inbox display-6 d-block text-muted mb-2"></i>
                     <span class="text-muted">No trades yet</span>
-                    ${data && data.data_source === 'Git Repository' ? 
-                        '<div class="small text-info mt-2"><i class="bi bi-git"></i> All trades stored in Git repository</div>' : 
+                    ${data && data.data_source === 'Git Repository (Auto-Sync)' ? 
+                        '<div class="small text-info mt-2"><i class="bi bi-git"></i> All trades auto-saved to Git repository</div>' : 
                         ''}
                 </td>
             </tr>
@@ -443,6 +595,7 @@ function updateTradeHistory(data) {
         const duration = exitTime ? Math.round((exitTime - entryTime) / 1000) : 0;
         const profitPips = trade.profit_pips || 0;
         const confidence = trade.confidence || 0;
+        const mlUsed = trade.ml_used || false;
         
         // Format time
         const timeStr = entryTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -465,7 +618,10 @@ function updateTradeHistory(data) {
         
         html += `
             <tr>
-                <td><strong>#${trade.id}</strong></td>
+                <td>
+                    <strong>#${trade.id}</strong>
+                    ${mlUsed ? '<br><small class="text-info"><i class="bi bi-cpu"></i> ML</small>' : ''}
+                </td>
                 <td>${timeStr}</td>
                 <td>
                     <span class="badge ${trade.action === 'BUY' ? 'bg-success' : 'bg-danger'}">
@@ -520,23 +676,33 @@ function updateStorageStatus(data) {
             for (const [fileName, fileInfo] of Object.entries(data.files)) {
                 if (fileInfo.exists) {
                     filesHtml += `
-                        <div class="small text-muted">
-                            <i class="bi bi-file-earmark-text"></i> ${fileName}: ${fileInfo.size_human}
+                        <div class="small ${fileInfo.size_bytes > 0 ? 'text-success' : 'text-muted'}">
+                            <i class="bi ${fileInfo.size_bytes > 0 ? 'bi-file-earmark-check' : 'bi-file-earmark'}"></i> 
+                            ${fileName}: ${fileInfo.size_human}
                         </div>
                     `;
                 }
             }
         }
         
+        const mlTrained = data.ml_trained || false;
+        const trainingSamples = data.training_samples || 0;
+        
         storageInfo.innerHTML = `
             <div class="text-center">
-                <i class="bi bi-git display-6 text-info mb-2"></i>
-                <h6 class="mb-2">Git Repository Storage</h6>
-                <div class="small text-muted mb-2">
+                <i class="bi bi-git display-6 ${data.git_commits > 0 ? 'text-success' : 'text-info'} mb-2"></i>
+                <h6 class="mb-2">Git Auto-Sync Storage</h6>
+                <div class="small ${data.git_commits > 0 ? 'text-success' : 'text-muted'} mb-2">
+                    <i class="bi bi-hash"></i> Git Commits: ${data.git_commits || 0}
+                </div>
+                <div class="small ${data.last_commit && data.last_commit !== 'Never' ? 'text-success' : 'text-muted'} mb-2">
+                    <i class="bi bi-clock"></i> Last Commit: ${data.last_commit || 'Never'}
+                </div>
+                <div class="small ${data.trade_count > 0 ? 'text-success' : 'text-muted'} mb-2">
                     <i class="bi bi-database"></i> Trade Count: ${data.trade_count || 0}
                 </div>
-                <div class="small text-muted mb-2">
-                    <i class="bi bi-cpu"></i> Training Samples: ${data.training_samples || 0}
+                <div class="small ${mlTrained ? 'text-success' : trainingSamples > 0 ? 'text-warning' : 'text-muted'} mb-2">
+                    <i class="bi bi-cpu"></i> ML Samples: ${trainingSamples} ${mlTrained ? '(Trained)' : '(Learning)'}
                 </div>
                 ${filesHtml ? `
                 <div class="mt-2 pt-2 border-top border-secondary">
@@ -545,14 +711,25 @@ function updateStorageStatus(data) {
                 </div>
                 ` : ''}
                 <div class="mt-3">
+                    <button id="syncNowBtn" class="btn btn-sm btn-success me-2">
+                        <i class="bi bi-arrow-repeat"></i> Sync Now
+                    </button>
                     <button id="viewGitRepo" class="btn btn-sm btn-dark">
-                        <i class="bi bi-github"></i> View Repository
+                        <i class="bi bi-github"></i> View Repo
                     </button>
                 </div>
             </div>
         `;
         
-        // Add event listener for the new button
+        // Add event listener for the new sync button
+        const syncNowBtn = document.getElementById('syncNowBtn');
+        if (syncNowBtn) {
+            syncNowBtn.addEventListener('click', function() {
+                syncWithGit();
+            });
+        }
+        
+        // Add event listener for the view repo button
         const viewGitRepoBtn = document.getElementById('viewGitRepo');
         if (viewGitRepoBtn) {
             viewGitRepoBtn.addEventListener('click', function() {
@@ -583,6 +760,7 @@ function resetTrading() {
             fetchTradingState();
             fetchTradeHistory();
             fetchStorageStatus();
+            fetchMLStatus();
         } else {
             showToast('Failed to reset trading', 'error');
         }
@@ -613,6 +791,8 @@ function startAutoRefresh() {
     historyTimer = setInterval(() => {
         if (isAutoRefreshEnabled) {
             fetchTradeHistory();
+            fetchStorageStatus();
+            fetchMLStatus(); // Also fetch ML status periodically
         }
     }, HISTORY_REFRESH_INTERVAL);
     
@@ -628,7 +808,7 @@ function startAutoRefresh() {
     }, 10000);
     
     updateAutoRefreshStatus(true);
-    console.log('Auto-refresh started');
+    console.log('Auto-refresh started with Git sync monitoring');
 }
 
 // Stop auto-refresh
@@ -812,9 +992,11 @@ window.addEventListener('beforeunload', function() {
 window.fetchTradingState = fetchTradingState;
 window.fetchTradeHistory = fetchTradeHistory;
 window.fetchStorageStatus = fetchStorageStatus;
+window.fetchMLStatus = fetchMLStatus;
+window.syncWithGit = syncWithGit;
 window.resetTrading = resetTrading;
 window.startAutoRefresh = startAutoRefresh;
 window.stopAutoRefresh = stopAutoRefresh;
 window.toggleAutoRefresh = toggleAutoRefresh;
 
-console.log('Main.js loaded successfully (2-Minute Cycle with Git Storage)');
+console.log('Main.js loaded successfully (Git Auto-Sync Edition)');

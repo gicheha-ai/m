@@ -1,7 +1,7 @@
 """
 EUR/USD 2-Minute Auto-Learning Trading System
 WITH 30-SECOND CACHING for API limit protection
-AND GIT REPOSITORY DATA STORAGE
+AND GIT REPOSITORY DATA STORAGE WITH AUTO-COMMIT
 """
 
 import os
@@ -19,6 +19,8 @@ import requests
 import warnings
 import logging
 from collections import deque
+import subprocess
+import shutil
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 
@@ -34,9 +36,11 @@ INITIAL_BALANCE = 10000.0
 BASE_TRADE_SIZE = 1000.0
 MIN_CONFIDENCE = 65.0
 
-# ==================== GIT REPOSITORY DATA STORAGE ====================
-# Data will be saved to your Git repo: https://github.com/gicheha-ai/m.git
-DATA_DIR = "data"
+# ==================== GIT REPOSITORY CONFIGURATION ====================
+GITHUB_TOKEN = "ghp_6wTZ34xF2QYwr9ayh66GA1QzRj9y942b0tqU"
+GITHUB_REPO_URL = "https://github.com/gicheha-ai/m.git"
+LOCAL_REPO_PATH = "m_repo"
+DATA_DIR = os.path.join(LOCAL_REPO_PATH, "data")
 TRADES_FILE = os.path.join(DATA_DIR, "trades.json")
 STATE_FILE = os.path.join(DATA_DIR, "state.json")
 ML_DATA_FILE = os.path.join(DATA_DIR, "ml_data.json")
@@ -93,8 +97,10 @@ trading_state = {
     'cache_misses': 0,
     'cache_efficiency': '0%',
     'api_calls_today': '~240 (SAFE)',
-    'data_storage': 'GIT_REPO',
-    'git_repo_url': 'https://github.com/gicheha-ai/m.git'
+    'data_storage': 'GIT_REPO_SYNCING',
+    'git_repo_url': GITHUB_REPO_URL,
+    'git_last_commit': 'Never',
+    'git_commit_count': 0
 }
 
 # Data storage
@@ -110,6 +116,7 @@ ml_features = []
 tp_labels = []
 sl_labels = []
 ml_trained = False
+ml_initialized = False
 
 # Setup logging
 logging.basicConfig(
@@ -120,82 +127,169 @@ logger = logging.getLogger(__name__)
 
 # Print startup banner
 print("="*80)
-print("EUR/USD 2-MINUTE TRADING SYSTEM WITH CACHING")
+print("EUR/USD 2-MINUTE TRADING SYSTEM WITH GIT SYNC")
 print("="*80)
 print(f"Cycle: Predict and trade every {CYCLE_MINUTES} minutes ({CYCLE_SECONDS} seconds)")
 print(f"Cache Duration: {CACHE_DURATION} seconds (66% API reduction)")
 print(f"API Calls/Day: ~240 (SAFE for all free limits)")
-print(f"Data Storage: Git Repository (No API limits)")
-print(f"Git Repo: https://github.com/gicheha-ai/m.git")
+print(f"Data Storage: Git Repository with Auto-Commit")
+print(f"Git Repo: {GITHUB_REPO_URL}")
+print(f"Git Token: Configured with write access")
 print(f"Initial Balance: ${INITIAL_BALANCE:,.2f}")
 print(f"Trade Size: ${BASE_TRADE_SIZE:,.2f}")
 print("="*80)
 print("Starting system...")
 
-# ==================== GIT REPOSITORY DATA STORAGE FUNCTIONS ====================
-def initialize_git_storage():
-    """Initialize Git repository data storage"""
+# ==================== GIT REPOSITORY AUTO-SYNC FUNCTIONS ====================
+def setup_git_repository():
+    """Clone and setup Git repository with authentication"""
     try:
-        # Create data directory if it doesn't exist
-        if not os.path.exists(DATA_DIR):
+        # Remove existing repo if exists
+        if os.path.exists(LOCAL_REPO_PATH):
+            shutil.rmtree(LOCAL_REPO_PATH)
+        
+        # Create authenticated Git URL
+        auth_repo_url = GITHUB_REPO_URL.replace('https://', f'https://{GITHUB_TOKEN}@')
+        
+        # Clone repository
+        logger.info(f"📦 Cloning repository: {GITHUB_REPO_URL}")
+        result = subprocess.run(
+            ['git', 'clone', auth_repo_url, LOCAL_REPO_PATH],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if result.returncode != 0:
+            logger.error(f"❌ Git clone failed: {result.stderr}")
+            
+            # Try to create directory and init if clone fails
+            os.makedirs(LOCAL_REPO_PATH, exist_ok=True)
             os.makedirs(DATA_DIR, exist_ok=True)
-            logger.info(f"✅ Created data directory: {DATA_DIR}")
+            
+            # Initialize git in directory
+            subprocess.run(['git', 'init'], cwd=LOCAL_REPO_PATH, capture_output=True)
+            subprocess.run(['git', 'remote', 'add', 'origin', auth_repo_url], 
+                          cwd=LOCAL_REPO_PATH, capture_output=True)
+            logger.warning("⚠️  Using initialized local repo (will try to push later)")
+        else:
+            logger.info("✅ Repository cloned successfully")
         
-        # Initialize trades.json
-        if not os.path.exists(TRADES_FILE) or os.path.getsize(TRADES_FILE) == 0:
-            with open(TRADES_FILE, 'w') as f:
-                json.dump([], f, indent=2)
-            logger.info(f"✅ Initialized trades.json")
+        # Configure git
+        subprocess.run(['git', 'config', 'user.email', 'trading-bot@gicheha-ai.com'], 
+                      cwd=LOCAL_REPO_PATH, capture_output=True)
+        subprocess.run(['git', 'config', 'user.name', 'Trading Bot'], 
+                      cwd=LOCAL_REPO_PATH, capture_output=True)
         
-        # Initialize state.json
-        if not os.path.exists(STATE_FILE) or os.path.getsize(STATE_FILE) == 0:
-            initial_state = {
-                "balance": INITIAL_BALANCE,
-                "total_trades": 0,
-                "profitable_trades": 0,
-                "win_rate": 0.0,
-                "cycle_count": 0,
-                "ml_model_ready": False,
-                "last_updated": datetime.now().isoformat(),
-                "git_repo": "https://github.com/gicheha-ai/m.git"
-            }
-            with open(STATE_FILE, 'w') as f:
-                json.dump(initial_state, f, indent=2)
-            logger.info(f"✅ Initialized state.json")
+        # Pull latest changes
+        subprocess.run(['git', 'pull', 'origin', 'main'], 
+                      cwd=LOCAL_REPO_PATH, capture_output=True)
         
-        # Initialize training_data.json
-        if not os.path.exists(TRAINING_FILE) or os.path.getsize(TRAINING_FILE) == 0:
-            with open(TRAINING_FILE, 'w') as f:
-                json.dump({"features": [], "tp_labels": [], "sl_labels": []}, f, indent=2)
-            logger.info(f"✅ Initialized training_data.json")
+        # Ensure data directory exists
+        os.makedirs(DATA_DIR, exist_ok=True)
         
-        # Load existing data
-        load_trades_from_storage()
-        load_training_from_storage()
-        
-        logger.info("✅ Git repository storage initialized successfully")
         trading_state['data_storage'] = 'GIT_REPO_READY'
         return True
         
     except Exception as e:
-        logger.error(f"❌ Error initializing Git storage: {e}")
-        trading_state['data_storage'] = f'GIT_REPO_ERROR: {str(e)[:50]}'
+        logger.error(f"❌ Git setup error: {e}")
+        trading_state['data_storage'] = f'GIT_ERROR: {str(e)[:50]}'
+        
+        # Create local directories as fallback
+        os.makedirs(LOCAL_REPO_PATH, exist_ok=True)
+        os.makedirs(DATA_DIR, exist_ok=True)
         return False
 
-def load_trades_from_storage():
-    """Load trades from Git repository storage"""
-    global trade_history
+def git_commit_and_push(message="Auto-commit trading data"):
+    """Commit changes and push to GitHub"""
+    try:
+        # Add all files
+        subprocess.run(['git', 'add', '.'], 
+                      cwd=LOCAL_REPO_PATH, capture_output=True)
+        
+        # Check if there are changes
+        result = subprocess.run(['git', 'status', '--porcelain'], 
+                               cwd=LOCAL_REPO_PATH, capture_output=True, text=True)
+        
+        if result.stdout.strip():
+            # Commit changes
+            commit_result = subprocess.run(
+                ['git', 'commit', '-m', f'{message} - {datetime.now().isoformat()}'],
+                cwd=LOCAL_REPO_PATH,
+                capture_output=True,
+                text=True
+            )
+            
+            if commit_result.returncode == 0:
+                # Push to GitHub
+                push_result = subprocess.run(
+                    ['git', 'push', 'origin', 'main'],
+                    cwd=LOCAL_REPO_PATH,
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                
+                if push_result.returncode == 0:
+                    trading_state['git_last_commit'] = datetime.now().strftime('%H:%M:%S')
+                    trading_state['git_commit_count'] += 1
+                    logger.info(f"✅ Git commit & push successful: {message}")
+                    return True
+                else:
+                    logger.warning(f"⚠️  Git push failed: {push_result.stderr}")
+                    return False
+            else:
+                logger.warning(f"⚠️  Git commit failed: {commit_result.stderr}")
+                return False
+        else:
+            return True  # No changes to commit
+            
+    except Exception as e:
+        logger.error(f"❌ Git commit/push error: {e}")
+        return False
+
+def git_pull_latest():
+    """Pull latest changes from GitHub"""
+    try:
+        result = subprocess.run(
+            ['git', 'pull', 'origin', 'main'],
+            cwd=LOCAL_REPO_PATH,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if result.returncode == 0:
+            logger.info("✅ Git pull successful")
+            return True
+        else:
+            logger.warning(f"⚠️  Git pull failed: {result.stderr}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Git pull error: {e}")
+        return False
+
+# ==================== DATA PERSISTENCE FUNCTIONS ====================
+def load_all_data_from_git():
+    """Load all data from Git repository files"""
+    global trade_history, ml_features, tp_labels, sl_labels
     
     try:
+        # Pull latest data first
+        git_pull_latest()
+        
+        # Load trades
+        trade_history = []
         if os.path.exists(TRADES_FILE) and os.path.getsize(TRADES_FILE) > 0:
             with open(TRADES_FILE, 'r') as f:
                 trade_history = json.load(f)
             
-            # Update trading statistics
+            # Update trading statistics from loaded trades
             if trade_history:
                 trading_state['total_trades'] = len([t for t in trade_history if t.get('status') == 'CLOSED'])
                 trading_state['profitable_trades'] = len([t for t in trade_history 
-                                                        if t.get('result') in ['SUCCESS', 'WIN', 'PARTIAL_SUCCESS']])
+                                                        if t.get('result') in ['SUCCESS', 'PARTIAL_SUCCESS']])
                 
                 if trading_state['total_trades'] > 0:
                     trading_state['win_rate'] = (trading_state['profitable_trades'] / 
@@ -208,23 +302,15 @@ def load_trades_from_storage():
                         balance += trade.get('profit_amount', 0)
                 trading_state['balance'] = balance
                 
-                logger.info(f"✅ Loaded {len(trade_history)} trades from Git storage")
-                logger.info(f"✅ Win Rate: {trading_state['win_rate']:.1f}%")
-                logger.info(f"✅ Balance: ${trading_state['balance']:.2f}")
-            
-            return trade_history
-        else:
-            return []
-            
-    except Exception as e:
-        logger.error(f"❌ Error loading trades: {e}")
-        return []
-
-def load_training_from_storage():
-    """Load ML training data from Git repository storage"""
-    global ml_features, tp_labels, sl_labels
-    
-    try:
+                logger.info(f"📊 Loaded {len(trade_history)} trades from Git")
+                logger.info(f"📊 Win Rate: {trading_state['win_rate']:.1f}%")
+                logger.info(f"💰 Balance: ${trading_state['balance']:.2f}")
+        
+        # Load training data
+        ml_features = []
+        tp_labels = []
+        sl_labels = []
+        
         if os.path.exists(TRAINING_FILE) and os.path.getsize(TRAINING_FILE) > 0:
             with open(TRAINING_FILE, 'r') as f:
                 data = json.load(f)
@@ -232,86 +318,293 @@ def load_training_from_storage():
                 tp_labels = data.get('tp_labels', [])
                 sl_labels = data.get('sl_labels', [])
                 
-                if len(ml_features) >= 10:
-                    train_ml_models()
-                    logger.info(f"✅ ML system loaded with {len(ml_features)} training samples from Git")
-                else:
-                    logger.info(f"⚠️  {len(ml_features)} samples - collecting more data")
-                    
-            return True
-        return False
+                logger.info(f"🤖 Loaded {len(ml_features)} ML training samples")
+        
+        # Load state
+        if os.path.exists(STATE_FILE) and os.path.getsize(STATE_FILE) > 0:
+            with open(STATE_FILE, 'r') as f:
+                state_data = json.load(f)
+                # Only load persistent state, not runtime state
+                trading_state['cycle_count'] = state_data.get('cycle_count', 0)
+                trading_state['git_last_commit'] = state_data.get('last_commit', 'Never')
+                trading_state['git_commit_count'] = state_data.get('commit_count', 0)
+        
+        return True
         
     except Exception as e:
-        logger.error(f"❌ Error loading training data: {e}")
+        logger.error(f"❌ Error loading data from Git: {e}")
+        return False
+
+def save_all_data_to_git():
+    """Save all data to Git repository files"""
+    try:
+        # Save trades
+        with open(TRADES_FILE, 'w') as f:
+            json.dump(trade_history, f, indent=2, default=str)
+        
+        # Save training data
+        with open(TRAINING_FILE, 'w') as f:
+            json.dump({
+                'features': ml_features,
+                'tp_labels': tp_labels,
+                'sl_labels': sl_labels,
+                'last_updated': datetime.now().isoformat(),
+                'total_samples': len(ml_features),
+                'ml_trained': ml_trained
+            }, f, indent=2)
+        
+        # Save state
+        with open(STATE_FILE, 'w') as f:
+            json.dump({
+                'balance': trading_state['balance'],
+                'total_trades': trading_state['total_trades'],
+                'profitable_trades': trading_state['profitable_trades'],
+                'win_rate': trading_state['win_rate'],
+                'cycle_count': trading_state['cycle_count'],
+                'ml_model_ready': ml_trained,
+                'last_updated': datetime.now().isoformat(),
+                'last_commit': trading_state['git_last_commit'],
+                'commit_count': trading_state['git_commit_count'],
+                'git_repo': GITHUB_REPO_URL
+            }, f, indent=2)
+        
+        # Save config
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump({
+                'cycle_duration': CYCLE_SECONDS,
+                'initial_balance': INITIAL_BALANCE,
+                'trade_size': BASE_TRADE_SIZE,
+                'min_confidence': MIN_CONFIDENCE,
+                'cache_duration': CACHE_DURATION,
+                'system_version': '2.0-git-auto-sync',
+                'last_saved': datetime.now().isoformat()
+            }, f, indent=2)
+        
+        # Commit and push to GitHub
+        git_commit_and_push("Trading data update")
+        
+        logger.info("💾 All data saved to Git repository")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Error saving data to Git: {e}")
         return False
 
 def save_trade_to_git(trade_data):
-    """Save trade to Git repository storage"""
+    """Save individual trade to Git repository"""
     global trade_history
     
     try:
         # Add trade to history
         trade_history.append(trade_data)
         
-        # Save to file
-        with open(TRADES_FILE, 'w') as f:
-            json.dump(trade_history, f, indent=2, default=str)
+        # Save all data (trades + training + state)
+        save_all_data_to_git()
         
-        logger.info(f"✅ Trade #{trade_data.get('id', 'N/A')} saved to Git repository")
-        
-        # Update trading state file
-        save_trading_state_to_git()
-        
+        logger.info(f"✅ Trade #{trade_data.get('id', 'N/A')} saved to Git")
         return {'success': True, 'message': 'Trade saved to Git repository'}
         
     except Exception as e:
         logger.error(f"❌ Error saving trade to Git: {e}")
         return {'success': False, 'error': str(e)}
 
-def save_training_to_git(features, tp_labels_data, sl_labels_data):
-    """Save training data to Git repository"""
+# ==================== ML TRAINING SYSTEM ====================
+def initialize_ml_system():
+    """Initialize ML system - train if enough data exists"""
+    global ml_trained, ml_initialized
+    
     try:
-        data = {
-            'features': features,
-            'tp_labels': tp_labels_data,
-            'sl_labels': sl_labels_data,
-            'last_updated': datetime.now().isoformat(),
-            'total_samples': len(features),
-            'system_version': '2.0-git-storage'
-        }
-        with open(TRAINING_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
+        logger.info("🤖 Initializing ML system...")
         
-        logger.info(f"✅ Training data saved to Git ({len(features)} samples)")
-        return True
+        # Check if we have enough training data
+        if len(ml_features) >= 10:
+            train_ml_models()
+            ml_trained = True
+            trading_state['ml_model_ready'] = True
+            logger.info(f"✅ ML system trained with {len(ml_features)} samples")
+        else:
+            ml_trained = False
+            trading_state['ml_model_ready'] = False
+            logger.info(f"⚠️  Insufficient ML data: {len(ml_features)}/10 samples")
+            
+            # If we have trades but no ML features, extract features from trades
+            if trade_history and len(ml_features) == 0:
+                extract_features_from_historical_trades()
+                if len(ml_features) >= 10:
+                    train_ml_models()
+                    ml_trained = True
+                    trading_state['ml_model_ready'] = True
+                    logger.info(f"✅ Extracted features from trades, trained with {len(ml_features)} samples")
+        
+        ml_initialized = True
+        return ml_trained
+        
     except Exception as e:
-        logger.error(f"❌ Error saving training data to Git: {e}")
+        logger.error(f"❌ ML initialization error: {e}")
+        ml_trained = False
+        trading_state['ml_model_ready'] = False
         return False
 
-def save_trading_state_to_git():
-    """Save current trading state to Git repository"""
+def extract_features_from_historical_trades():
+    """Extract ML features from historical trades"""
+    global ml_features, tp_labels, sl_labels
+    
     try:
-        # Create minimal state for persistence
-        persistent_state = {
-            'balance': trading_state['balance'],
-            'total_trades': trading_state['total_trades'],
-            'profitable_trades': trading_state['profitable_trades'],
-            'win_rate': trading_state['win_rate'],
-            'cycle_count': trading_state['cycle_count'],
-            'ml_model_ready': trading_state['ml_model_ready'],
-            'last_updated': datetime.now().isoformat(),
-            'git_repo': 'https://github.com/gicheha-ai/m.git'
-        }
+        for trade in trade_history:
+            if trade.get('status') == 'CLOSED' and trade.get('result') in ['SUCCESS', 'FAILED']:
+                # Extract features similar to learn_from_trade
+                features = [
+                    trade.get('confidence', 50) / 100,
+                    trade.get('tp_distance_pips', 10) / 100,
+                    trade.get('sl_distance_pips', 5) / 100,
+                    1 if trade.get('action') == 'BUY' else 0,
+                    abs(trade.get('profit_pips', 0)) / 100
+                ]
+                
+                # Determine optimal TP/SL based on result
+                if trade.get('result') == 'SUCCESS':
+                    optimal_tp = trade.get('tp_distance_pips', 10)
+                    optimal_sl = trade.get('sl_distance_pips', 5)
+                else:  # FAILED
+                    optimal_tp = trade.get('tp_distance_pips', 10) * 0.7
+                    optimal_sl = trade.get('sl_distance_pips', 5) * 1.3
+                
+                ml_features.append(features)
+                tp_labels.append(optimal_tp)
+                sl_labels.append(optimal_sl)
         
-        with open(STATE_FILE, 'w') as f:
-            json.dump(persistent_state, f, indent=2)
-        
-        logger.debug("✅ Trading state saved to Git repository")
-        return True
+        logger.info(f"📊 Extracted {len(ml_features)} features from historical trades")
         
     except Exception as e:
-        logger.error(f"❌ Error saving trading state to Git: {e}")
-        return False
+        logger.error(f"❌ Error extracting features from trades: {e}")
+
+def train_ml_models():
+    """Train ML models for TP/SL optimization"""
+    global tp_model, sl_model, ml_scaler, ml_trained
+    
+    if len(ml_features) < 5:  # Lower threshold for initial training
+        ml_trained = False
+        trading_state['ml_model_ready'] = False
+        return
+    
+    try:
+        X = np.array(ml_features)
+        y_tp = np.array(tp_labels)
+        y_sl = np.array(sl_labels)
+        
+        # Scale features
+        X_scaled = ml_scaler.fit_transform(X)
+        
+        # Train TP model
+        tp_model.fit(X_scaled, y_tp)
+        
+        # Train SL model
+        sl_model.fit(X_scaled, y_sl)
+        
+        ml_trained = True
+        trading_state['ml_model_ready'] = True
+        logger.info(f"🤖 ML models trained on {len(X)} samples")
+        
+        # Save training data to Git
+        save_all_data_to_git()
+        
+    except Exception as e:
+        logger.error(f"❌ ML training error: {e}")
+        ml_trained = False
+        trading_state['ml_model_ready'] = False
+
+def predict_optimal_levels(features, direction, current_price, df):
+    """Predict optimal TP and SL levels for 2-minute trades"""
+    
+    # Base levels for 2-minute trades
+    if direction == "BULLISH":
+        base_tp = current_price + 0.0008
+        base_sl = current_price - 0.0005
+    elif direction == "BEARISH":
+        base_tp = current_price - 0.0008
+        base_sl = current_price + 0.0005
+    else:
+        base_tp = current_price
+        base_sl = current_price
+    
+    # Use ML predictions if available
+    if ml_trained and features is not None and len(ml_features) >= 5:
+        try:
+            X_scaled = ml_scaler.transform([features])
+            
+            # Predict optimal TP distance
+            tp_pips_pred = tp_model.predict(X_scaled)[0]
+            tp_pips_pred = max(5, min(20, tp_pips_pred))
+            
+            # Predict optimal SL distance
+            sl_pips_pred = sl_model.predict(X_scaled)[0]
+            sl_pips_pred = max(3, min(15, sl_pips_pred))
+            
+            # Convert pips to price
+            pip_value = 0.0001
+            
+            if direction == "BULLISH":
+                optimal_tp = current_price + (tp_pips_pred * pip_value)
+                optimal_sl = current_price - (sl_pips_pred * pip_value)
+            elif direction == "BEARISH":
+                optimal_tp = current_price - (tp_pips_pred * pip_value)
+                optimal_sl = current_price + (sl_pips_pred * pip_value)
+            else:
+                optimal_tp = base_tp
+                optimal_sl = base_sl
+            
+            logger.info(f"🤖 ML suggested: TP={tp_pips_pred:.1f} pips, SL={sl_pips_pred:.1f} pips")
+            return optimal_tp, optimal_sl, int(tp_pips_pred), int(sl_pips_pred)
+            
+        except Exception as e:
+            logger.warning(f"⚠️  ML prediction failed, using indicators: {e}")
+    
+    # Fallback to technical indicators
+    return predict_with_indicators(df, direction, current_price)
+
+def predict_with_indicators(df, direction, current_price):
+    """Predict TP/SL using technical indicators when ML is not available"""
+    
+    if df.empty or len(df) < 20:
+        # Default levels
+        tp_pips = 8
+        sl_pips = 5
+    else:
+        latest = df.iloc[-1]
+        
+        # Use volatility (ATR) to determine levels
+        atr_value = latest.get('atr', 0.0005)
+        volatility_factor = atr_value * 10000  # Convert to pips
+        
+        # RSI-based adjustment
+        rsi_value = latest.get('rsi', 50)
+        if rsi_value < 30 or rsi_value > 70:  # Overbought/Oversold
+            tp_pips = int(volatility_factor * 0.8)  # Smaller TP
+            sl_pips = int(volatility_factor * 0.6)  # Smaller SL
+        else:
+            tp_pips = int(volatility_factor * 1.2)  # Normal TP
+            sl_pips = int(volatility_factor * 0.8)  # Normal SL
+        
+        # Ensure reasonable ranges
+        tp_pips = max(5, min(20, tp_pips))
+        sl_pips = max(3, min(15, sl_pips))
+    
+    pip_value = 0.0001
+    
+    if direction == "BULLISH":
+        optimal_tp = current_price + (tp_pips * pip_value)
+        optimal_sl = current_price - (sl_pips * pip_value)
+    elif direction == "BEARISH":
+        optimal_tp = current_price - (tp_pips * pip_value)
+        optimal_sl = current_price + (sl_pips * pip_value)
+    else:
+        optimal_tp = current_price
+        optimal_sl = current_price
+        tp_pips = 0
+        sl_pips = 0
+    
+    logger.info(f"📊 Indicator-based: TP={tp_pips} pips, SL={sl_pips} pips")
+    return optimal_tp, optimal_sl, tp_pips, sl_pips
 
 # ==================== CACHED FOREX DATA FETCHING ====================
 def get_cached_eurusd_price():
@@ -353,7 +646,6 @@ def get_cached_eurusd_price():
             'params': {'pairs': 'EURUSD'},
             'extract_rate': lambda data: data['rates']['EURUSD']
         }
-        # ⭐ REMOVED ExchangeRate-API (too low limits)
     ]
     
     # Try each API
@@ -362,7 +654,6 @@ def get_cached_eurusd_price():
             logger.info(f"Trying {api['name']} API...")
             response = requests.get(api['url'], params=api['params'], timeout=5)
             
-            # Handle rate limits gracefully
             if response.status_code == 429:
                 logger.warning(f"⏸️ {api['name']} rate limit reached, skipping...")
                 continue
@@ -394,7 +685,6 @@ def get_cached_eurusd_price():
     logger.warning("⚠️ All APIs failed, using stale cached data")
     
     if price_cache['price']:
-        # Add small realistic movement to stale price
         stale_change = np.random.uniform(-0.00005, 0.00005)
         stale_price = price_cache['price'] + stale_change
         
@@ -407,7 +697,6 @@ def get_cached_eurusd_price():
         trading_state['api_status'] = 'STALE_CACHE'
         return stale_price, f"Stale Cache ({price_cache['source']})"
     else:
-        # First run, no cache yet
         trading_state['api_status'] = 'SIMULATION'
         return 1.0850, 'Simulation (Initial)'
 
@@ -491,66 +780,8 @@ def calculate_advanced_indicators(prices):
         return df
         
     except Exception as e:
-        logger.error(f"Indicator calculation error: {e}")
+        logger.error(f"❌ Indicator calculation error: {e}")
         return df.fillna(0)
-
-# ==================== ML TRAINING SYSTEM ====================
-def initialize_training_system():
-    """Initialize or load ML training data"""
-    global ml_features, tp_labels, sl_labels, ml_trained
-    
-    if os.path.exists(TRAINING_FILE):
-        try:
-            with open(TRAINING_FILE, 'r') as f:
-                data = json.load(f)
-                ml_features = data.get('features', [])
-                tp_labels = data.get('tp_labels', [])
-                sl_labels = data.get('sl_labels', [])
-                
-                if len(ml_features) >= 10:
-                    train_ml_models()
-                    logger.info(f"✅ ML system loaded with {len(ml_features)} training samples")
-                else:
-                    logger.info(f"⚠️  {len(ml_features)} samples - collecting more data")
-                    
-        except Exception as e:
-            logger.error(f"Error loading training data: {e}")
-            save_training_to_git([], [], [])
-    else:
-        save_training_to_git([], [], [])
-        logger.info("Created new training data file")
-
-def train_ml_models():
-    """Train ML models for TP/SL optimization"""
-    global tp_model, sl_model, ml_scaler, ml_trained
-    
-    if len(ml_features) < 10:
-        ml_trained = False
-        trading_state['ml_model_ready'] = False
-        return
-    
-    try:
-        X = np.array(ml_features)
-        y_tp = np.array(tp_labels)
-        y_sl = np.array(sl_labels)
-        
-        # Scale features
-        X_scaled = ml_scaler.fit_transform(X)
-        
-        # Train TP model
-        tp_model.fit(X_scaled, y_tp)
-        
-        # Train SL model
-        sl_model.fit(X_scaled, y_sl)
-        
-        ml_trained = True
-        trading_state['ml_model_ready'] = True
-        logger.info(f"✅ ML models trained on {len(X)} samples")
-        
-    except Exception as e:
-        logger.error(f"ML training error: {e}")
-        ml_trained = False
-        trading_state['ml_model_ready'] = False
 
 def extract_ml_features(df, current_price):
     """Extract features for ML prediction"""
@@ -584,58 +815,6 @@ def extract_ml_features(df, current_price):
     features.append(latest.get('oversold', 0))
     
     return features
-
-def predict_optimal_levels(features, direction, current_price, df):
-    """Predict optimal TP and SL levels for 2-minute trades"""
-    
-    # Base levels for 2-minute trades
-    if direction == "BULLISH":
-        base_tp = current_price + 0.0008
-        base_sl = current_price - 0.0005
-    elif direction == "BEARISH":
-        base_tp = current_price - 0.0008
-        base_sl = current_price + 0.0005
-    else:
-        base_tp = current_price
-        base_sl = current_price
-    
-    # Use ML predictions if available
-    if ml_trained and features is not None:
-        try:
-            X_scaled = ml_scaler.transform([features])
-            
-            # Predict optimal TP distance
-            tp_pips_pred = tp_model.predict(X_scaled)[0]
-            tp_pips_pred = max(5, min(20, tp_pips_pred))
-            
-            # Predict optimal SL distance
-            sl_pips_pred = sl_model.predict(X_scaled)[0]
-            sl_pips_pred = max(3, min(15, sl_pips_pred))
-            
-            # Convert pips to price
-            pip_value = 0.0001
-            
-            if direction == "BULLISH":
-                optimal_tp = current_price + (tp_pips_pred * pip_value)
-                optimal_sl = current_price - (sl_pips_pred * pip_value)
-            elif direction == "BEARISH":
-                optimal_tp = current_price - (tp_pips_pred * pip_value)
-                optimal_sl = current_price + (sl_pips_pred * pip_value)
-            else:
-                optimal_tp = base_tp
-                optimal_sl = base_sl
-            
-            logger.info(f"🤖 ML suggested: TP={tp_pips_pred:.1f} pips, SL={sl_pips_pred:.1f} pips")
-            return optimal_tp, optimal_sl, int(tp_pips_pred), int(sl_pips_pred)
-            
-        except Exception as e:
-            logger.warning(f"ML prediction failed: {e}")
-    
-    # Fallback to base levels
-    tp_pips = int(abs(base_tp - current_price) * 10000)
-    sl_pips = int(abs(base_sl - current_price) * 10000)
-    
-    return base_tp, base_sl, tp_pips, sl_pips
 
 # ==================== 2-MINUTE PREDICTION ENGINE ====================
 def analyze_2min_prediction(df, current_price):
@@ -724,7 +903,7 @@ def analyze_2min_prediction(df, current_price):
         return probability, confidence, direction, signal_strength
         
     except Exception as e:
-        logger.error(f"Prediction error: {e}")
+        logger.error(f"❌ Prediction error: {e}")
         return 0.5, 50, 'ERROR', 1
 
 # ==================== TRADE EXECUTION ====================
@@ -769,7 +948,8 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
         'reason': action_reason,
         'cycle_duration': CYCLE_SECONDS,
         'signal_strength': signal_strength,
-        'data_stored_in': 'git://github.com/gicheha-ai/m.git/data/trades.json'
+        'data_stored_in': GITHUB_REPO_URL,
+        'ml_used': ml_trained
     }
     
     trading_state['current_trade'] = trade
@@ -790,6 +970,7 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
     logger.info(f"   Take Profit: {optimal_tp:.5f} ({tp_pips} pips)")
     logger.info(f"   Stop Loss: {optimal_sl:.5f} ({sl_pips} pips)")
     logger.info(f"   Confidence: {confidence:.1f}%")
+    logger.info(f"   ML Used: {ml_trained}")
     logger.info(f"   Goal: Hit TP ({tp_pips} pips) before SL ({sl_pips} pips) in {CYCLE_SECONDS} seconds")
     logger.info(f"   Data Storage: Saved to Git repository")
     
@@ -883,14 +1064,11 @@ def monitor_active_trade(current_price):
         if trading_state['total_trades'] > 0:
             trading_state['win_rate'] = (trading_state['profitable_trades'] / trading_state['total_trades']) * 100
         
-        # Save updated trade to Git repository
-        save_trade_to_git(trade)
-        
         # Learn from this trade
         learn_from_trade(trade, current_price)
         
-        # Save trading state
-        save_trading_state_to_git()
+        # Save all data to Git
+        save_all_data_to_git()
         
         # Clear current trade
         trading_state['current_trade'] = None
@@ -939,17 +1117,17 @@ def learn_from_trade(trade, current_price):
         tp_labels.append(optimal_tp)
         sl_labels.append(optimal_sl)
         
-        # Save training data to Git repository
-        save_training_to_git(ml_features, tp_labels, sl_labels)
+        # Save training data to Git
+        save_all_data_to_git()
         
         # Retrain if we have enough samples
-        if len(ml_features) >= 10 and len(ml_features) % 5 == 0:
+        if len(ml_features) >= 5 and len(ml_features) % 3 == 0:
             train_ml_models()
         
         logger.info(f"📚 Learned from trade #{trade['id']}: {trade['result']}")
         
     except Exception as e:
-        logger.error(f"Learning error: {e}")
+        logger.error(f"❌ Learning error: {e}")
 
 # ==================== CHART CREATION ====================
 def create_trading_chart(prices, current_trade, next_cycle):
@@ -1067,20 +1245,28 @@ def create_trading_chart(prices, current_trade, next_cycle):
         return json.dumps(fig.to_dict(), cls=plotly.utils.PlotlyJSONEncoder)
         
     except Exception as e:
-        logger.error(f"Chart error: {e}")
+        logger.error(f"❌ Chart error: {e}")
         return None
 
 # ==================== MAIN 2-MINUTE CYCLE ====================
 def trading_cycle():
-    """Main 2-minute trading cycle with caching"""
+    """Main 2-minute trading cycle with caching and Git sync"""
     global trading_state
     
-    cycle_count = 0
+    # Initialize Git repository and load data
+    logger.info("🔄 Initializing Git repository...")
+    setup_git_repository()
+    load_all_data_from_git()
     
-    # Initialize Git storage and ML system
-    initialize_git_storage()
+    # Initialize ML system BEFORE first prediction
+    logger.info("🤖 Initializing ML system...")
+    initialize_ml_system()
     
-    logger.info("✅ Trading bot started with 2-minute cycles and Git storage")
+    cycle_count = trading_state['cycle_count']
+    
+    logger.info("✅ Trading bot started with 2-minute cycles and Git auto-sync")
+    logger.info(f"📊 Starting with {len(trade_history)} historical trades")
+    logger.info(f"🤖 ML Ready: {ml_trained} ({len(ml_features)} samples)")
     
     while True:
         try:
@@ -1129,7 +1315,7 @@ def trading_cycle():
             # 5. EXTRACT ML FEATURES
             ml_features_current = extract_ml_features(df_indicators, current_price)
             
-            # 6. PREDICT OPTIMAL TP/SL
+            # 6. PREDICT OPTIMAL TP/SL (ML will be used if trained, otherwise indicators)
             optimal_tp, optimal_sl, tp_pips, sl_pips = predict_optimal_levels(
                 ml_features_current, direction, current_price, df_indicators
             )
@@ -1182,10 +1368,11 @@ def trading_cycle():
             logger.info(f"  TP/SL: {tp_pips}/{sl_pips} pips")
             logger.info(f"  Balance: ${trading_state['balance']:.2f}")
             logger.info(f"  Win Rate: {trading_state['win_rate']:.1f}%")
-            logger.info(f"  ML Ready: {trading_state['ml_model_ready']}")
+            logger.info(f"  ML Ready: {ml_trained} ({len(ml_features)} samples)")
             logger.info(f"  Cache Efficiency: {trading_state['cache_efficiency']}")
-            logger.info(f"  Data Storage: Git Repository")
-            logger.info(f"  Git Repo: https://github.com/gicheha-ai/m.git")
+            logger.info(f"  Data Storage: Git Repository (Auto-Sync)")
+            logger.info(f"  Git Commits: {trading_state['git_commit_count']}")
+            logger.info(f"  Last Commit: {trading_state['git_last_commit']}")
             logger.info(f"  Next cycle in: {next_cycle_time}s")
             logger.info(f"{'='*70}")
             
@@ -1203,7 +1390,7 @@ def trading_cycle():
                 time.sleep(1)
             
         except Exception as e:
-            logger.error(f"Trading cycle error: {e}")
+            logger.error(f"❌ Trading cycle error: {e}")
             import traceback
             traceback.print_exc()
             time.sleep(60)
@@ -1230,7 +1417,7 @@ def get_trading_state():
         
         return jsonify(state_copy)
     except Exception as e:
-        logger.error(f"API error: {e}")
+        logger.error(f"❌ API error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/trade_history')
@@ -1250,23 +1437,26 @@ def get_trade_history():
             'total': len(trade_history),
             'profitable': trading_state['profitable_trades'],
             'win_rate': trading_state['win_rate'],
-            'data_source': 'Git Repository',
-            'git_repo': 'https://github.com/gicheha-ai/m.git',
-            'storage_file': TRADES_FILE
+            'data_source': 'Git Repository (Auto-Sync)',
+            'git_repo': GITHUB_REPO_URL,
+            'storage_file': TRADES_FILE,
+            'ml_samples': len(ml_features),
+            'ml_trained': ml_trained
         })
     except Exception as e:
-        logger.error(f"Trade history error: {e}")
+        logger.error(f"❌ Trade history error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/ml_status')
 def get_ml_status():
     """Get ML training status"""
     return jsonify({
-        'ml_model_ready': trading_state['ml_model_ready'],
+        'ml_model_ready': ml_trained,
         'training_samples': len(ml_features),
         'training_file': TRAINING_FILE,
         'last_trained': trading_state['last_update'],
-        'data_storage': 'Git Repository'
+        'data_storage': 'Git Repository (Auto-Sync)',
+        'using_ml_for_predictions': ml_trained and len(ml_features) >= 5
     })
 
 @app.route('/api/cache_status')
@@ -1283,10 +1473,10 @@ def get_cache_status():
         'api_calls_today': '~240 (66% reduction)'
     })
 
-@app.route('/api/reset_trading')
+@app.route('/api/reset_trading', methods=['POST'])
 def reset_trading():
     """Reset trading statistics"""
-    global trade_history, ml_features, tp_labels, sl_labels
+    global trade_history, ml_features, tp_labels, sl_labels, ml_trained
     
     trading_state.update({
         'balance': INITIAL_BALANCE,
@@ -1305,9 +1495,11 @@ def reset_trading():
     ml_features.clear()
     tp_labels.clear()
     sl_labels.clear()
+    ml_trained = False
+    trading_state['ml_model_ready'] = False
     
     # Reset training file in Git
-    save_training_to_git([], [], [])
+    save_all_data_to_git()
     
     return jsonify({'success': True, 'message': 'Trading reset complete'})
 
@@ -1323,9 +1515,14 @@ def health_check():
         'cache_enabled': True,
         'cache_duration': CACHE_DURATION,
         'api_calls_per_day': '~240 (SAFE)',
-        'data_storage': 'Git Repository',
-        'git_repo': 'https://github.com/gicheha-ai/m.git',
-        'version': '2.0-git-storage'
+        'data_storage': 'Git Repository (Auto-Sync)',
+        'git_repo': GITHUB_REPO_URL,
+        'git_commits': trading_state['git_commit_count'],
+        'last_commit': trading_state['git_last_commit'],
+        'ml_ready': ml_trained,
+        'ml_samples': len(ml_features),
+        'trades_in_history': len(trade_history),
+        'version': '2.0-git-auto-sync'
     })
 
 @app.route('/api/storage_status')
@@ -1333,28 +1530,49 @@ def get_storage_status():
     """Get data storage status"""
     files = {}
     try:
-        for file in [TRADES_FILE, STATE_FILE, TRAINING_FILE]:
+        for file in [TRADES_FILE, STATE_FILE, TRAINING_FILE, CONFIG_FILE]:
             if os.path.exists(file):
                 size = os.path.getsize(file)
                 files[os.path.basename(file)] = {
                     'exists': True,
                     'size_bytes': size,
-                    'size_human': f"{size/1024:.1f} KB"
+                    'size_human': f"{size/1024:.1f} KB",
+                    'path': file
                 }
             else:
                 files[os.path.basename(file)] = {'exists': False}
     
     except Exception as e:
-        logger.error(f"Storage status error: {e}")
+        logger.error(f"❌ Storage status error: {e}")
     
     return jsonify({
-        'data_storage': 'Git Repository',
-        'git_repo': 'https://github.com/gicheha-ai/m.git',
+        'data_storage': 'Git Repository (Auto-Sync)',
+        'git_repo': GITHUB_REPO_URL,
         'data_directory': DATA_DIR,
         'files': files,
         'trade_count': len(trade_history),
-        'training_samples': len(ml_features)
+        'training_samples': len(ml_features),
+        'git_commits': trading_state['git_commit_count'],
+        'last_commit': trading_state['git_last_commit'],
+        'ml_trained': ml_trained
     })
+
+@app.route('/api/sync_now', methods=['POST'])
+def sync_now():
+    """Force sync with Git repository"""
+    try:
+        if git_pull_latest():
+            load_all_data_from_git()
+            return jsonify({
+                'success': True, 
+                'message': 'Synced with Git repository',
+                'trades_loaded': len(trade_history),
+                'ml_samples': len(ml_features)
+            })
+        else:
+            return jsonify({'success': False, 'message': 'Git sync failed'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 # ==================== START TRADING BOT ====================
 def start_trading_bot():
@@ -1362,12 +1580,13 @@ def start_trading_bot():
     try:
         thread = threading.Thread(target=trading_cycle, daemon=True)
         thread.start()
-        logger.info("✅ Trading bot started successfully")
+        logger.info("✅ Trading bot started successfully with Git auto-sync")
         print("✅ 2-Minute trading system ACTIVE")
         print(f"✅ Caching: {CACHE_DURATION}-second cache enabled")
-        print("✅ Data Storage: Git Repository (No API limits)")
-        print(f"✅ Git Repo: https://github.com/gicheha-ai/m.git")
-        print("✅ ML Training: Ready after 10 trades")
+        print(f"✅ Data Storage: Git Repository with Auto-Commit")
+        print(f"✅ Git Repo: {GITHUB_REPO_URL}")
+        print(f"✅ ML Training: Automatic ({len(ml_features)} samples loaded)")
+        print(f"✅ Git Commits: {trading_state['git_commit_count']}")
     except Exception as e:
         logger.error(f"❌ Error starting trading bot: {e}")
         print(f"❌ Error: {e}")
@@ -1381,12 +1600,13 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"🌐 Web dashboard: http://localhost:{port}")
     print("="*80)
-    print("GIT STORAGE SYSTEM READY")
+    print("GIT AUTO-SYNC SYSTEM READY")
     print(f"• 2-minute cycles with {CACHE_DURATION}-second caching")
-    print(f"• Data Storage: Git Repository (No API limits)")
-    print(f"• Git Repo: https://github.com/gicheha-ai/m.git")
+    print(f"• Data Storage: Git Repository with Auto-Commit")
+    print(f"• Git Repo: {GITHUB_REPO_URL}")
+    print(f"• ML Training: Auto-train when enough data")
     print(f"• Data survives: Redeploys, Sleep, Restarts")
-    print(f"• ML training after: 10 trades")
+    print(f"• Auto-sync: Commits after every trade")
     print("="*80)
     
     app.run(
