@@ -492,6 +492,46 @@ def execute_git_push():
         logger.error(f"❌ Git push error: {e}")
         return {'success': False, 'message': str(e)}
 
+def queue_git_push(trade_id=None):
+    """Queue a Git push to happen after trade completion"""
+    if not trading_state['git_enabled']:
+        return
+    
+    queue_item = {
+        'timestamp': datetime.now(),
+        'trade_id': trade_id,
+        'type': 'trade_completion',
+        'attempts': 0
+    }
+    
+    git_push_queue.append(queue_item)
+    trading_state['git_push_pending'] = True
+    logger.info(f"📝 Queued Git push for trade #{trade_id}")
+
+def process_git_push_queue():
+    """Process the Git push queue"""
+    if not git_push_queue or not trading_state['git_enabled']:
+        return
+    
+    try:
+        logger.info(f"🔄 Processing Git push queue ({len(git_push_queue)} items)")
+        
+        push_result = execute_git_push()
+        
+        if push_result.get('success'):
+            git_push_queue.clear()
+            logger.info("✅ Git push queue processed successfully")
+        else:
+            for item in git_push_queue:
+                item['attempts'] = item.get('attempts', 0) + 1
+            
+            git_push_queue[:] = [item for item in git_push_queue if item.get('attempts', 0) < 3]
+            
+            logger.warning(f"⚠️  Git push failed, {len(git_push_queue)} items remain in queue")
+            
+    except Exception as e:
+        logger.error(f"❌ Error processing Git push queue: {e}")
+
 # ==================== PRICE FETCHING FUNCTIONS ====================
 def get_cached_eurusd_price():
     """Get EUR/USD price with 30-second caching"""
@@ -604,46 +644,6 @@ def create_price_series(current_price, periods=120):
     
     return pd.Series(final_prices, name='price')
 
-def queue_git_push(trade_id=None):
-    """Queue a Git push to happen after trade completion"""
-    if not trading_state['git_enabled']:
-        return
-    
-    queue_item = {
-        'timestamp': datetime.now(),
-        'trade_id': trade_id,
-        'type': 'trade_completion',
-        'attempts': 0
-    }
-    
-    git_push_queue.append(queue_item)
-    trading_state['git_push_pending'] = True
-    logger.info(f"📝 Queued Git push for trade #{trade_id}")
-
-def process_git_push_queue():
-    """Process the Git push queue"""
-    if not git_push_queue or not trading_state['git_enabled']:
-        return
-    
-    try:
-        logger.info(f"🔄 Processing Git push queue ({len(git_push_queue)} items)")
-        
-        push_result = execute_git_push()
-        
-        if push_result.get('success'):
-            git_push_queue.clear()
-            logger.info("✅ Git push queue processed successfully")
-        else:
-            for item in git_push_queue:
-                item['attempts'] = item.get('attempts', 0) + 1
-            
-            git_push_queue[:] = [item for item in git_push_queue if item.get('attempts', 0) < 3]
-            
-            logger.warning(f"⚠️  Git push failed, {len(git_push_queue)} items remain in queue")
-            
-    except Exception as e:
-        logger.error(f"❌ Error processing Git push queue: {e}")
-
 # ==================== SIMPLE TEST GIT PUSH ====================
 def test_git_push():
     """Simple test to verify Git push works"""
@@ -675,10 +675,6 @@ def test_git_push():
         return {'success': False, 'message': str(e)}
 
 # ==================== REST OF THE TRADING SYSTEM FUNCTIONS ====================
-# [Previous trading system functions remain exactly the same]
-# ML functions, trading cycle, prediction engine, etc.
-# ... (Copy all the remaining functions from previous versions)
-
 def initialize_ml_system():
     """Initialize ML system"""
     global ml_trained, ml_initialized
@@ -738,15 +734,24 @@ def calculate_advanced_indicators(price_series):
     df['macd_signal'] = macd['MACDs_12_26_9']
     df['macd_histogram'] = macd['MACDh_12_26_9']
     
-    # Bollinger Bands
+    # Bollinger Bands - FIXED COLUMN NAMES
     bb = ta.bbands(df['price'], length=20, std=2)
-    df['bb_upper'] = bb['BBU_20_2.0']
-    df['bb_middle'] = bb['BBM_20_2.0']
-    df['bb_lower'] = bb['BBL_20_2.0']
+    # Check for column names and use generic indexing if specific names not found
+    if 'BBU_20_2.0' in bb.columns:
+        df['bb_upper'] = bb['BBU_20_2.0']
+        df['bb_middle'] = bb['BBM_20_2.0']
+        df['bb_lower'] = bb['BBL_20_2.0']
+    else:
+        # Use generic column access
+        df['bb_upper'] = bb.iloc[:, 0]  # First column is upper band
+        df['bb_middle'] = bb.iloc[:, 1]  # Second column is middle band
+        df['bb_lower'] = bb.iloc[:, 2]  # Third column is lower band
     
     # ATR for volatility
-    df['atr'] = ta.atr(df['price'].rolling(2).max(), df['price'].rolling(2).min(), 
-                       df['price'], length=14)
+    high = df['price'].rolling(window=2).max()
+    low = df['price'].rolling(window=2).min()
+    close = df['price']
+    df['atr'] = ta.atr(high, low, close, length=14)
     
     # SMA
     df['sma_20'] = ta.sma(df['price'], length=20)
@@ -757,8 +762,9 @@ def calculate_advanced_indicators(price_series):
     df['ema_26'] = ta.ema(df['price'], length=26)
     
     # Stochastic
-    stoch = ta.stoch(df['price'].rolling(2).max(), df['price'].rolling(2).min(), 
-                     df['price'], k=14, d=3)
+    high_stoch = df['price'].rolling(window=14).max()
+    low_stoch = df['price'].rolling(window=14).min()
+    stoch = ta.stoch(high_stoch, low_stoch, df['price'], k=14, d=3)
     df['stoch_k'] = stoch['STOCHk_14_3_3']
     df['stoch_d'] = stoch['STOCHd_14_3_3']
     
@@ -1342,7 +1348,7 @@ def trading_cycle():
                 process_git_push_queue()
             
             # Update state
-            trading_state['last_update'] = datetime.now().strftime('%Y-%m-d %H:%M:%S')
+            trading_state['last_update'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             trading_state['server_time'] = datetime.now().isoformat()
             
             # Log summary
