@@ -40,7 +40,9 @@ MIN_CONFIDENCE = 65.0
 # ==================== STORAGE CONFIGURATION ====================
 # Use environment variables for production - NO TOKEN IN CODE!
 GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN')  # Will be set in Render environment
-GITHUB_REPO_URL = "https://github.com/gicheha-ai/m.git"
+GITHUB_USERNAME = "gicheha-ai"
+GITHUB_REPO = "m"
+GITHUB_REPO_URL = f"https://github.com/{GITHUB_USERNAME}/{GITHUB_REPO}"
 LOCAL_REPO_PATH = "trading_data"
 DATA_DIR = os.path.join(LOCAL_REPO_PATH, "data")
 TRADES_FILE = os.path.join(DATA_DIR, "trades.json")
@@ -102,7 +104,8 @@ trading_state = {
     'git_repo_url': GITHUB_REPO_URL,
     'git_last_commit': 'Never',
     'git_commit_count': 0,
-    'git_push_pending': False
+    'git_push_pending': False,
+    'git_enabled': False
 }
 
 # Data storage
@@ -122,7 +125,6 @@ ml_initialized = False
 
 # Git sync management
 git_push_queue = []
-GIT_PUSH_ENABLED = False  # Will be enabled after setup
 
 # Setup logging
 logging.basicConfig(
@@ -308,46 +310,36 @@ def save_all_data_local():
         logger.error(f"❌ Error saving data to local storage: {e}")
         return {'success': False, 'error': str(e)}
 
-# ==================== GIT PUSH FUNCTIONS ====================
-def setup_git_repository():
-    """Setup Git repository for pushing data"""
-    global GIT_PUSH_ENABLED
-    
+# ==================== GIT PUSH FUNCTIONS (SIMPLIFIED) ====================
+def setup_git_for_push():
+    """Setup Git for pushing - simplified version"""
     try:
-        # Check if token exists in environment
         if not GITHUB_TOKEN:
             logger.warning("⚠️  GitHub token not found in environment variables")
             trading_state['data_storage'] = 'LOCAL_ONLY_NO_GIT_TOKEN'
-            GIT_PUSH_ENABLED = False
+            trading_state['git_enabled'] = False
             return False
         
         logger.info(f"🔑 GitHub token found: {GITHUB_TOKEN[:8]}...")
         
-        # Remove existing repo if exists
-        if os.path.exists(LOCAL_REPO_PATH):
-            try:
-                shutil.rmtree(LOCAL_REPO_PATH)
-                logger.info("🗑️  Cleared existing repo directory")
-            except Exception as e:
-                logger.warning(f"⚠️  Could not remove existing repo: {e}")
-        
-        # Create authenticated Git URL
-        auth_repo_url = GITHUB_REPO_URL.replace('https://', f'https://{GITHUB_TOKEN}@')
-        
-        # Clone repository
-        logger.info("📦 Cloning repository for Git push...")
-        result = subprocess.run(
-            ['git', 'clone', auth_repo_url, LOCAL_REPO_PATH],
-            capture_output=True,
-            text=True,
-            timeout=45
-        )
-        
-        if result.returncode != 0:
-            logger.error(f"❌ Git clone failed: {result.stderr}")
-            trading_state['data_storage'] = 'LOCAL_ONLY_GIT_CLONE_FAILED'
-            GIT_PUSH_ENABLED = False
-            return False
+        # Check if we need to clone or already have repo
+        if not os.path.exists(LOCAL_REPO_PATH):
+            # Clone the repository with auth URL
+            auth_url = f"https://{GITHUB_USERNAME}:{GITHUB_TOKEN}@github.com/{GITHUB_USERNAME}/{GITHUB_REPO}.git"
+            logger.info(f"📦 Cloning repository: {GITHUB_REPO_URL}")
+            
+            result = subprocess.run(
+                ['git', 'clone', auth_url, LOCAL_REPO_PATH],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                logger.error(f"❌ Git clone failed: {result.stderr}")
+                trading_state['data_storage'] = 'LOCAL_ONLY_GIT_CLONE_FAILED'
+                trading_state['git_enabled'] = False
+                return False
         
         # Configure git
         subprocess.run(['git', 'config', 'user.email', 'trading-bot@gicheha-ai.com'], 
@@ -358,111 +350,155 @@ def setup_git_repository():
         # Ensure data directory exists
         os.makedirs(DATA_DIR, exist_ok=True)
         
-        # Create initial README
-        readme_path = os.path.join(DATA_DIR, "README.md")
-        if not os.path.exists(readme_path):
-            with open(readme_path, 'w') as f:
-                f.write("# Trading Data\n\nThis directory contains trading data from the EUR/USD 2-Minute Trading System.\n\n")
-                f.write(f"- System started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"- Data format: JSON\n")
-                f.write(f"- Auto-updated on trade completion\n")
-        
         trading_state['data_storage'] = 'LOCAL_READY_GIT_PUSH_ENABLED'
-        GIT_PUSH_ENABLED = True
-        logger.info("✅ Git repository setup complete - Ready for pushes")
+        trading_state['git_enabled'] = True
+        logger.info("✅ Git setup complete - Ready for pushes")
         return True
         
     except Exception as e:
         logger.error(f"❌ Git setup error: {e}")
         trading_state['data_storage'] = 'LOCAL_ONLY_GIT_SETUP_ERROR'
-        GIT_PUSH_ENABLED = False
+        trading_state['git_enabled'] = False
         return False
 
-def push_to_github(commit_message="Trading data update"):
-    """Push data to GitHub using actual git commands"""
+def execute_git_push():
+    """Execute Git push using shell commands"""
     try:
-        if not GIT_PUSH_ENABLED or not GITHUB_TOKEN:
+        if not trading_state['git_enabled'] or not GITHUB_TOKEN:
             logger.warning("⚠️  Git push not enabled or token missing")
             return {'success': False, 'message': 'Git push not enabled'}
         
-        logger.info("🚀 Pushing data to GitHub...")
+        logger.info("🚀 Starting Git push...")
         
-        # 1. Add all files
-        add_result = subprocess.run(
-            ['git', 'add', '.'],
-            cwd=LOCAL_REPO_PATH,
-            capture_output=True,
-            text=True
-        )
+        # Save all data to local storage first
+        save_result = save_all_data_local()
+        if not save_result.get('success'):
+            logger.error("❌ Failed to save data locally before Git push")
+            return {'success': False, 'message': 'Failed to save data locally'}
         
-        if add_result.returncode != 0:
-            logger.error(f"❌ Git add failed: {add_result.stderr}")
-            return {'success': False, 'message': 'Git add failed'}
-        
-        # 2. Check if there are changes
-        status_result = subprocess.run(
-            ['git', 'status', '--porcelain'],
-            cwd=LOCAL_REPO_PATH,
-            capture_output=True,
-            text=True
-        )
-        
-        if not status_result.stdout.strip():
-            logger.info("📭 No changes to commit")
-            return {'success': True, 'message': 'No changes to commit'}
-        
-        # 3. Commit changes
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        commit_result = subprocess.run(
-            ['git', 'commit', '-m', f'{commit_message} - {timestamp}'],
-            cwd=LOCAL_REPO_PATH,
-            capture_output=True,
-            text=True
-        )
-        
-        if commit_result.returncode != 0:
-            logger.error(f"❌ Git commit failed: {commit_result.stderr}")
-            return {'success': False, 'message': 'Git commit failed'}
-        
-        # 4. Push to GitHub
-        push_result = subprocess.run(
-            ['git', 'push', '-u', 'origin', 'main'],
-            cwd=LOCAL_REPO_PATH,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        
-        if push_result.returncode == 0:
-            trading_state['git_last_commit'] = datetime.now().strftime('%H:%M:%S')
-            trading_state['git_commit_count'] += 1
-            trading_state['git_push_pending'] = False
+        # Copy data files to Git repo
+        if os.path.exists(LOCAL_REPO_PATH):
+            # Ensure data directory exists in repo
+            repo_data_dir = os.path.join(LOCAL_REPO_PATH, "data")
+            os.makedirs(repo_data_dir, exist_ok=True)
             
-            logger.info(f"✅ Git push successful! Commit: {trading_state['git_commit_count']}")
-            return {'success': True, 'message': 'Git push successful', 'commit_count': trading_state['git_commit_count']}
-        else:
-            logger.error(f"❌ Git push failed: {push_result.stderr}")
-            trading_state['git_push_pending'] = True
-            return {'success': False, 'message': 'Git push failed'}
+            # Copy files
+            import shutil
+            for file in [TRADES_FILE, STATE_FILE, TRAINING_FILE, CONFIG_FILE]:
+                if os.path.exists(file):
+                    shutil.copy2(file, repo_data_dir)
+        
+        # Change to repo directory and execute Git commands
+        original_dir = os.getcwd()
+        os.chdir(LOCAL_REPO_PATH)
+        
+        try:
+            # 1. Add all files
+            logger.info("📝 Adding files to Git...")
+            result = subprocess.run(
+                'git add .',
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode != 0:
+                logger.error(f"❌ Git add failed: {result.stderr}")
+                return {'success': False, 'message': f'Git add failed: {result.stderr[:100]}'}
+            
+            # 2. Check if there are changes
+            result = subprocess.run(
+                'git status --porcelain',
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if not result.stdout.strip():
+                logger.info("📭 No changes to commit")
+                return {'success': True, 'message': 'No changes to commit'}
+            
+            # 3. Commit changes
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            logger.info(f"💾 Committing changes: {timestamp}")
+            result = subprocess.run(
+                f'git commit -m "Trading data update - {timestamp}"',
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode != 0:
+                logger.error(f"❌ Git commit failed: {result.stderr}")
+                return {'success': False, 'message': f'Git commit failed: {result.stderr[:100]}'}
+            
+            # 4. Push to GitHub
+            logger.info("⬆️  Pushing to GitHub...")
+            
+            # Use authenticated URL for push
+            auth_url = f"https://{GITHUB_USERNAME}:{GITHUB_TOKEN}@github.com/{GITHUB_USERNAME}/{GITHUB_REPO}.git"
+            result = subprocess.run(
+                f'git push {auth_url} main',
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode == 0:
+                trading_state['git_last_commit'] = datetime.now().strftime('%H:%M:%S')
+                trading_state['git_commit_count'] += 1
+                trading_state['git_push_pending'] = False
+                
+                logger.info(f"✅ Git push successful! Total commits: {trading_state['git_commit_count']}")
+                return {'success': True, 'message': 'Git push successful', 'commit_count': trading_state['git_commit_count']}
+            else:
+                logger.error(f"❌ Git push failed: {result.stderr}")
+                trading_state['git_push_pending'] = True
+                
+                # Try alternative push method
+                logger.info("🔄 Trying alternative push method...")
+                result2 = subprocess.run(
+                    'git push origin main',
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    env={**os.environ, 'GIT_TERMINAL_PROMPT': '0'}
+                )
+                
+                if result2.returncode == 0:
+                    trading_state['git_last_commit'] = datetime.now().strftime('%H:%M:%S')
+                    trading_state['git_commit_count'] += 1
+                    trading_state['git_push_pending'] = False
+                    logger.info(f"✅ Git push successful (alternative method)!")
+                    return {'success': True, 'message': 'Git push successful via alternative method'}
+                else:
+                    return {'success': False, 'message': f'Git push failed: {result.stderr[:100]}'}
+                    
+        finally:
+            os.chdir(original_dir)
             
     except subprocess.TimeoutExpired:
         logger.error("❌ Git push timed out")
         return {'success': False, 'message': 'Git push timed out'}
     except Exception as e:
         logger.error(f"❌ Git push error: {e}")
-        return {'success': False, 'message': str(e)}
+        return {'success': False, 'message': str(e)[:100]}
 
 def queue_git_push(trade_id=None):
     """Queue a Git push to happen after trade completion"""
-    global git_push_queue
-    
-    if not GIT_PUSH_ENABLED:
+    if not trading_state['git_enabled']:
         return
     
     queue_item = {
         'timestamp': datetime.now(),
         'trade_id': trade_id,
-        'type': 'trade_completion'
+        'type': 'trade_completion',
+        'attempts': 0
     }
     
     git_push_queue.append(queue_item)
@@ -471,28 +507,27 @@ def queue_git_push(trade_id=None):
 
 def process_git_push_queue():
     """Process the Git push queue"""
-    global git_push_queue
-    
-    if not git_push_queue or not GIT_PUSH_ENABLED:
+    if not git_push_queue or not trading_state['git_enabled']:
         return
     
     try:
         logger.info(f"🔄 Processing Git push queue ({len(git_push_queue)} items)")
         
-        # Save all data locally first
-        save_result = save_all_data_local()
-        if not save_result.get('success'):
-            logger.error("❌ Failed to save data locally before Git push")
-            return
-        
-        # Push to GitHub
-        push_result = push_to_github("Trade data update")
+        # Try to push
+        push_result = execute_git_push()
         
         if push_result.get('success'):
             git_push_queue.clear()
             logger.info("✅ Git push queue processed successfully")
         else:
-            logger.warning(f"⚠️  Git push failed, keeping {len(git_push_queue)} items in queue")
+            # Increment attempts
+            for item in git_push_queue:
+                item['attempts'] = item.get('attempts', 0) + 1
+            
+            # Remove items with too many attempts
+            git_push_queue[:] = [item for item in git_push_queue if item.get('attempts', 0) < 3]
+            
+            logger.warning(f"⚠️  Git push failed, {len(git_push_queue)} items remain in queue")
             
     except Exception as e:
         logger.error(f"❌ Error processing Git push queue: {e}")
@@ -1170,7 +1205,7 @@ def monitor_active_trade(current_price):
         logger.info(f"💾 Trade #{trade['id']} data saved locally")
         
         # ✅ QUEUE GIT PUSH FOR THIS TRADE
-        if GIT_PUSH_ENABLED:
+        if trading_state['git_enabled']:
             trade['git_push_queued'] = True
             queue_git_push(trade['id'])
             logger.info(f"📝 Git push queued for trade #{trade['id']}")
@@ -1364,9 +1399,9 @@ def trading_cycle():
     setup_local_storage()
     load_all_data_local()
     
-    # Setup Git repository for pushing
-    logger.info("🔄 Setting up Git repository for pushes...")
-    setup_git_repository()
+    # Setup Git for pushing
+    logger.info("🔄 Setting up Git for pushes...")
+    setup_git_for_push()
     
     # Initialize ML system
     logger.info("🤖 Initializing ML system...")
@@ -1378,7 +1413,7 @@ def trading_cycle():
     logger.info(f"📊 Starting with {len(trade_history)} historical trades")
     logger.info(f"🤖 ML Ready: {ml_trained} ({len(ml_features)} samples)")
     logger.info(f"💾 Storage: {trading_state['data_storage']}")
-    logger.info(f"🚀 Git Push: {'Enabled' if GIT_PUSH_ENABLED else 'Disabled'}")
+    logger.info(f"🚀 Git Push: {'✅ Enabled' if trading_state['git_enabled'] else '❌ Disabled'}")
     
     while True:
         try:
@@ -1487,7 +1522,7 @@ def trading_cycle():
             logger.info(f"  ML Ready: {ml_trained} ({len(ml_features)} samples)")
             logger.info(f"  Cache Efficiency: {trading_state['cache_efficiency']}")
             logger.info(f"  Data Storage: {trading_state['data_storage']}")
-            logger.info(f"  Git Push: {'Enabled' if GIT_PUSH_ENABLED else 'Disabled'}")
+            logger.info(f"  Git Push: {'✅ Enabled' if trading_state['git_enabled'] else '❌ Disabled'}")
             logger.info(f"  Git Pending: {len(git_push_queue)} queued")
             logger.info(f"  Git Commits: {trading_state['git_commit_count']}")
             logger.info(f"  Next cycle in: {next_cycle_time}s")
@@ -1561,7 +1596,7 @@ def get_trade_history():
             'ml_trained': ml_trained,
             'git_commits': trading_state['git_commit_count'],
             'last_commit': trading_state['git_last_commit'],
-            'git_push_enabled': GIT_PUSH_ENABLED,
+            'git_enabled': trading_state['git_enabled'],
             'git_pending': len(git_push_queue)
         })
     except Exception as e:
@@ -1578,26 +1613,23 @@ def get_ml_status():
         'last_trained': trading_state['last_update'],
         'data_storage': trading_state['data_storage'],
         'using_ml_for_predictions': ml_trained and len(ml_features) >= 5,
-        'git_push_enabled': GIT_PUSH_ENABLED
+        'git_enabled': trading_state['git_enabled']
     })
 
 @app.route('/api/git_status')
 def get_git_status():
     """Get Git repository status"""
     try:
-        git_enabled = bool(GITHUB_TOKEN) and GIT_PUSH_ENABLED
-        
         return jsonify({
-            'git_enabled': git_enabled,
+            'git_enabled': trading_state['git_enabled'],
             'git_token_configured': bool(GITHUB_TOKEN),
-            'git_push_enabled': GIT_PUSH_ENABLED,
             'data_storage': trading_state['data_storage'],
             'git_repo': GITHUB_REPO_URL,
             'git_commits': trading_state['git_commit_count'],
             'last_commit': trading_state['git_last_commit'],
             'git_pending': len(git_push_queue),
             'git_push_queued': trading_state['git_push_pending'],
-            'local_path': LOCAL_REPO_PATH if git_enabled else None
+            'local_path': LOCAL_REPO_PATH if trading_state['git_enabled'] else None
         })
         
     except Exception as e:
@@ -1611,29 +1643,74 @@ def get_git_status():
 def manual_git_push():
     """Manual Git push endpoint"""
     try:
-        # First save all data locally
-        save_result = save_all_data_local()
-        if not save_result.get('success'):
-            return jsonify({'success': False, 'message': 'Failed to save data locally'}), 500
+        if not trading_state['git_enabled']:
+            return jsonify({'success': False, 'message': 'Git push not enabled'}), 400
         
-        # Push to GitHub
-        if GIT_PUSH_ENABLED:
-            push_result = push_to_github("Manual push from dashboard")
-            
-            if push_result.get('success'):
-                return jsonify({
-                    'success': True,
-                    'message': 'Git push successful',
-                    'commit_count': trading_state['git_commit_count'],
-                    'last_commit': trading_state['git_last_commit']
-                })
-            else:
-                return jsonify({'success': False, 'message': push_result.get('message')}), 500
+        # Execute Git push
+        result = execute_git_push()
+        
+        if result.get('success'):
+            return jsonify({
+                'success': True,
+                'message': 'Git push successful',
+                'commit_count': trading_state['git_commit_count'],
+                'last_commit': trading_state['git_last_commit']
+            })
         else:
-            return jsonify({'success': False, 'message': 'Git push not enabled'}), 500
+            return jsonify({'success': False, 'message': result.get('message')}), 500
             
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/test_git')
+def test_git():
+    """Test Git functionality"""
+    try:
+        # Test local files
+        files = {}
+        for file in [TRADES_FILE, STATE_FILE, TRAINING_FILE, CONFIG_FILE]:
+            exists = os.path.exists(file)
+            size = os.path.getsize(file) if exists else 0
+            files[os.path.basename(file)] = {
+                'exists': exists, 
+                'size': size,
+                'path': file
+            }
+        
+        # Test Git status
+        git_status = {
+            'token_exists': bool(GITHUB_TOKEN),
+            'token_length': len(GITHUB_TOKEN) if GITHUB_TOKEN else 0,
+            'repo_exists': os.path.exists(LOCAL_REPO_PATH),
+            'git_enabled': trading_state['git_enabled'],
+            'data_storage': trading_state['data_storage']
+        }
+        
+        # Try a simple git command if repo exists
+        if os.path.exists(LOCAL_REPO_PATH):
+            try:
+                result = subprocess.run(
+                    ['git', 'status'],
+                    cwd=LOCAL_REPO_PATH,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                git_status['git_status_ok'] = result.returncode == 0
+                git_status['git_output'] = result.stdout[:100] if result.stdout else result.stderr[:100]
+            except:
+                git_status['git_status_ok'] = False
+        
+        return jsonify({
+            'local_files': files,
+            'git_status': git_status,
+            'trade_history_count': len(trade_history),
+            'ml_samples': len(ml_features),
+            'git_push_queue': len(git_push_queue)
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/reset_trading', methods=['POST'])
 def reset_trading():
@@ -1685,9 +1762,9 @@ def health_check():
         'ml_samples': len(ml_features),
         'trades_in_history': len(trade_history),
         'git_token_configured': bool(GITHUB_TOKEN),
-        'git_push_enabled': GIT_PUSH_ENABLED,
+        'git_enabled': trading_state['git_enabled'],
         'git_pending': len(git_push_queue),
-        'version': '2.0-local-git-push'
+        'version': '2.0-local-git-push-fixed'
     })
 
 @app.route('/api/storage_status')
@@ -1722,7 +1799,7 @@ def get_storage_status():
         'last_commit': trading_state['git_last_commit'],
         'ml_trained': ml_trained,
         'git_token_configured': bool(GITHUB_TOKEN),
-        'git_push_enabled': GIT_PUSH_ENABLED
+        'git_enabled': trading_state['git_enabled']
     })
 
 # ==================== START TRADING BOT ====================
@@ -1737,7 +1814,7 @@ def start_trading_bot():
         print(f"✅ Data Storage: Local files with Git push on trade completion")
         print(f"✅ Git Repo: {GITHUB_REPO_URL}")
         print(f"✅ Git Token: {'✅ Configured via environment' if GITHUB_TOKEN else '❌ NOT CONFIGURED'}")
-        print(f"✅ Git Push: {'✅ Enabled' if GIT_PUSH_ENABLED else '❌ Disabled'}")
+        print(f"✅ Git Push: {'✅ Enabled' if trading_state['git_enabled'] else '❌ Disabled'}")
         print(f"✅ ML Training: Automatic ({len(ml_features)} samples loaded)")
         print(f"✅ Git Commits: {trading_state['git_commit_count']}")
         print(f"✅ Git Status: {trading_state['data_storage']}")
@@ -1761,7 +1838,8 @@ if __name__ == '__main__':
     print(f"• Git Repo: {GITHUB_REPO_URL}")
     print(f"• ML Training: Auto-train when enough data")
     print(f"• Auto-push: After each trade completion")
-    print(f"• Manual push: Available via dashboard")
+    print(f"• Manual push: Available via /api/manual_git_push")
+    print(f"• Test: Visit /api/test_git to verify Git setup")
     print("="*80)
     
     app.run(
