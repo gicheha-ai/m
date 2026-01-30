@@ -130,6 +130,11 @@ function fetchTradeHistory() {
             console.log('Trade history received:', data.trades ? data.trades.length : 0, 'trades');
             updateTradeHistory(data);
             
+            // Update trade ID info if available
+            if (data.next_trade_id) {
+                updateElementText('nextTradeId', data.next_trade_id);
+            }
+            
             if (data.ml_samples !== undefined) {
                 updateElementText('mlSamplesCount', data.ml_samples);
             }
@@ -295,7 +300,7 @@ function updateDashboard(data) {
         'bg-secondary fs-5 p-2'
     }`;
     
-    // Update statistics
+    // Update statistics - IMPORTANT: Show total trades from Git
     updateElementText('balance', `$${(data.balance || 10000).toFixed(2)}`);
     updateElementText('totalTrades', data.total_trades || 0);
     updateElementText('winRate', `${(data.win_rate || 0).toFixed(1)}%`);
@@ -349,8 +354,30 @@ function updateDashboard(data) {
         updateChart(data.chart_data);
     }
     
+    // Update Git sync info
+    updateGitInfo(data);
+    
     // Update footer status
     updateFooterStatus();
+}
+
+function updateGitInfo(data) {
+    // Update Git sync information
+    if (data.git_last_push) {
+        updateElementText('gitLastSync', `Last Sync: ${data.git_last_push}`);
+    }
+    
+    if (data.git_total_pushes) {
+        updateElementText('gitTotalPushes', `Total Syncs: ${data.git_total_pushes}`);
+    }
+    
+    if (data.git_enabled !== undefined) {
+        const gitStatus = document.getElementById('gitStatus');
+        if (gitStatus) {
+            gitStatus.textContent = data.git_enabled ? 'Git Sync: Active' : 'Git Sync: Disabled';
+            gitStatus.className = `badge ${data.git_enabled ? 'bg-success' : 'bg-warning'}`;
+        }
+    }
 }
 
 function updateGitSyncInfo(data) {
@@ -392,6 +419,11 @@ function updateMLStatusDisplay(mlData) {
         mlFooterStatus.className = `badge ${isTrained ? 'bg-success' : 'bg-warning'}`;
         mlStatusBadge.textContent = isTrained ? 'Trained' : 'Learning';
         mlStatusBadge.className = `badge ${isTrained ? 'bg-success' : 'bg-warning'}`;
+    }
+    
+    // Update next trade ID if available
+    if (mlData.next_trade_id) {
+        updateElementText('nextTradeIdDisplay', mlData.next_trade_id);
     }
 }
 
@@ -475,9 +507,9 @@ function updateActiveTrade(trade) {
                 </small>
             </div>
             
-            ${trade.data_stored_in ? `
-            <div class="small text-info mt-2">
-                <i class="bi bi-git"></i> Auto-saved to Git
+            ${trade.git_pushed ? `
+            <div class="small text-success mt-2">
+                <i class="bi bi-check-circle"></i> Saved to Git
             </div>
             ` : ''}
         </div>
@@ -493,24 +525,33 @@ function updateTradeHistory(data) {
                 <td colspan="11" class="text-center py-4">
                     <i class="bi bi-inbox display-6 d-block text-muted mb-2"></i>
                     <span class="text-muted">No trades yet</span>
-                    ${data && data.data_source === 'Git Repository (Auto-Sync)' ? 
-                        '<div class="small text-info mt-2"><i class="bi bi-git"></i> All trades auto-saved to Git repository</div>' : 
-                        ''}
+                    <div class="small text-info mt-2">
+                        <i class="bi bi-git"></i> All trades auto-saved to Git repository
+                    </div>
                 </td>
             </tr>
         `;
         
         updateElementText('totalHistoryTrades', '0');
         updateElementText('totalWins', '0');
+        updateElementText('nextTradeId', 'T1');
         return;
     }
     
     const totalTrades = data.total || data.trades.length;
-    const profitableTrades = data.profitable || data.trades.filter(t => t.result === 'SUCCESS').length;
+    const profitableTrades = data.profitable || data.trades.filter(t => 
+        t.result === 'SUCCESS' || t.result === 'SUCCESS_FAST'
+    ).length;
     
     updateElementText('totalHistoryTrades', totalTrades);
     updateElementText('totalWins', profitableTrades);
     
+    // Update next trade ID if available
+    if (data.next_trade_id) {
+        updateElementText('nextTradeId', data.next_trade_id);
+    }
+    
+    // Display trade history with Git sync status
     let html = '';
     data.trades.slice().reverse().forEach(trade => {
         const entryTime = trade.entry_time ? new Date(trade.entry_time) : new Date();
@@ -519,22 +560,31 @@ function updateTradeHistory(data) {
         const profitPips = trade.profit_pips || 0;
         const confidence = trade.confidence || 0;
         const mlUsed = trade.ml_used || false;
+        const gitPushed = trade.git_pushed || false;
         
         const timeStr = entryTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         
         let resultClass = 'bg-secondary';
         let resultText = trade.result || 'PENDING';
         
-        if (trade.result === 'SUCCESS') {
+        if (trade.result === 'SUCCESS_FAST') {
             resultClass = 'bg-success';
+            resultText = 'FAST WIN';
+        } else if (trade.result === 'SUCCESS') {
+            resultClass = 'bg-success';
+            resultText = 'WIN';
         } else if (trade.result === 'FAILED') {
             resultClass = 'bg-danger';
+            resultText = 'LOSS';
         } else if (trade.result === 'PARTIAL_SUCCESS') {
             resultClass = 'bg-info';
+            resultText = 'PARTIAL';
         } else if (trade.result === 'PARTIAL_FAIL') {
             resultClass = 'bg-warning';
+            resultText = 'PARTIAL';
         } else if (trade.result === 'BREAKEVEN') {
             resultClass = 'bg-secondary';
+            resultText = 'EVEN';
         }
         
         html += `
@@ -542,6 +592,7 @@ function updateTradeHistory(data) {
                 <td>
                     <strong>#${trade.id}</strong>
                     ${mlUsed ? '<br><small class="text-info"><i class="bi bi-cpu"></i> ML</small>' : ''}
+                    ${gitPushed ? '<br><small class="text-success"><i class="bi bi-git"></i> Git</small>' : ''}
                 </td>
                 <td>${timeStr}</td>
                 <td>
@@ -624,6 +675,11 @@ function updateStorageStatus(data) {
                 <div class="small ${mlTrained ? 'text-success' : trainingSamples > 0 ? 'text-warning' : 'text-muted'} mb-2">
                     <i class="bi bi-cpu"></i> ML Samples: ${trainingSamples} ${mlTrained ? '(Trained)' : '(Learning)'}
                 </div>
+                ${data.next_trade_id ? `
+                <div class="small text-success mb-2">
+                    <i class="bi bi-arrow-right-circle"></i> Next Trade: ${data.next_trade_id}
+                </div>
+                ` : ''}
                 ${filesHtml ? `
                 <div class="mt-2 pt-2 border-top border-secondary">
                     <div class="small mb-1">Files:</div>

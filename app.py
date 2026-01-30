@@ -66,9 +66,9 @@ trading_state = {
     'cycle_count': 0,
     'current_trade': None,
     'balance': INITIAL_BALANCE,
-    'total_trades': 0,
-    'profitable_trades': 0,
-    'total_profit': 0.0,
+    'total_trades': 0,  # Will be updated from Git on startup
+    'profitable_trades': 0,  # Will be updated from Git on startup
+    'total_profit': 0.0,  # Will be updated from Git on startup
     'win_rate': 0.0,
     'is_demo_data': False,
     'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -116,6 +116,9 @@ ml_features = []
 tp_labels = []
 sl_labels = []
 ml_trained = False
+
+# Next trade ID tracking
+next_trade_id = 1  # Will be updated from Git trades
 
 # Setup logging
 logging.basicConfig(
@@ -191,7 +194,7 @@ def setup_git_repo():
         trading_state['git_push_enabled'] = False
         return False
 
-def execute_git_push(trade_data=None):
+def execute_git_push():
     """Execute Git push with trade data"""
     try:
         if not trading_state['git_push_enabled']:
@@ -212,10 +215,13 @@ def execute_git_push(trade_data=None):
             json.dump({
                 'last_updated': datetime.now().isoformat(),
                 'total_trades': len(trade_history),
+                'profitable_trades': trading_state['profitable_trades'],
                 'balance': trading_state['balance'],
+                'total_profit': trading_state['total_profit'],
                 'win_rate': trading_state['win_rate'],
                 'ml_model_ready': ml_trained,
-                'ml_training_samples': len(ml_features)
+                'ml_training_samples': len(ml_features),
+                'next_trade_id': next_trade_id
             }, f, indent=2)
         
         # Change to repo directory
@@ -319,72 +325,109 @@ def execute_git_push(trade_data=None):
         logger.error(f"❌ Git push error: {e}")
         return {'success': False, 'message': str(e)}
 
-def pull_git_trades():
-    """Pull trade data from Git repo for ML training"""
+def load_trades_from_git():
+    """Load trade data from Git repo and update all counters"""
+    global trade_history, next_trade_id, trading_state
+    
     try:
         if not trading_state['git_push_enabled']:
-            logger.warning("⚠️  Git pull not enabled")
-            return {'success': False, 'message': 'Git pull not enabled'}
+            logger.warning("⚠️  Git load not enabled")
+            return {'success': False, 'message': 'Git load not enabled'}
         
-        logger.info("📥 Pulling trade data from Git repo...")
+        logger.info("📥 Loading trade data from Git repo...")
         
-        # Change to repo directory
-        original_dir = os.getcwd()
-        os.chdir(LOCAL_REPO_PATH)
-        
-        try:
-            # Pull latest changes
-            result = subprocess.run(
-                'git pull origin main',
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+        trades_loaded = 0
+        if os.path.exists(TRADES_FILE) and os.path.getsize(TRADES_FILE) > 0:
+            with open(TRADES_FILE, 'r') as f:
+                loaded_trades = json.load(f)
             
-            if result.returncode != 0:
-                logger.warning(f"⚠️  Git pull failed: {result.stderr[:200]}")
-                return {'success': False, 'message': 'Git pull failed'}
-            
-            # Load trade data from file
-            trades_loaded = 0
-            if os.path.exists(TRADES_FILE) and os.path.getsize(TRADES_FILE) > 0:
-                with open(TRADES_FILE, 'r') as f:
-                    remote_trades = json.load(f)
+            if loaded_trades:
+                # Clear current trade history and load all trades from Git
+                trade_history.clear()
+                trade_history.extend(loaded_trades)
+                trades_loaded = len(trade_history)
                 
-                if remote_trades and len(remote_trades) > len(trade_history):
-                    trades_loaded = len(remote_trades) - len(trade_history)
-                    trade_history.clear()
-                    trade_history.extend(remote_trades)
-                    trading_state['git_total_trades_loaded'] = len(trade_history)
-                    logger.info(f"📊 Loaded {len(trade_history)} trades from Git repo (+{trades_loaded} new)")
-            
-            trading_state['git_last_pull'] = datetime.now().strftime('%H:%M:%S')
-            logger.info("✅ Git pull successful")
-            return {'success': True, 'message': 'Git pull successful', 'trades_loaded': trades_loaded}
+                # CRITICAL: Update trading state from loaded trades
+                total_trades = len(trade_history)
+                profitable_trades = 0
+                total_profit = 0.0
+                balance = INITIAL_BALANCE
+                
+                # Calculate statistics from all loaded trades
+                for trade in trade_history:
+                    if trade.get('status') == 'CLOSED':
+                        profit = trade.get('profit_amount', 0)
+                        total_profit += profit
+                        balance += profit
+                        
+                        if trade.get('result') in ['SUCCESS', 'SUCCESS_FAST', 'PARTIAL_SUCCESS']:
+                            profitable_trades += 1
+                
+                # Update trading state with loaded data
+                trading_state['total_trades'] = total_trades
+                trading_state['profitable_trades'] = profitable_trades
+                trading_state['total_profit'] = total_profit
+                trading_state['balance'] = balance
+                
+                if total_trades > 0:
+                    trading_state['win_rate'] = (profitable_trades / total_trades) * 100
+                
+                # Calculate next trade ID - find the highest numeric ID
+                max_id = 0
+                for trade in trade_history:
+                    trade_id = trade.get('id', '')
+                    if trade_id.startswith('T'):
+                        try:
+                            # Extract numeric part after 'T'
+                            num_part = trade_id[1:]
+                            # Handle timestamp-based IDs: T20250130123045
+                            if num_part.isdigit() and len(num_part) == 14:
+                                # For timestamp IDs, we use sequential numbering instead
+                                continue
+                            else:
+                                num_id = int(num_part)
+                                max_id = max(max_id, num_id)
+                        except:
+                            continue
+                
+                # Set next trade ID to continue sequence
+                next_trade_id = max_id + 1
+                
+                trading_state['git_total_trades_loaded'] = trades_loaded
+                logger.info(f"📊 Loaded {trades_loaded} trades from Git repo")
+                logger.info(f"📈 Statistics: {total_trades} total, {profitable_trades} profitable")
+                logger.info(f"💰 Balance from trades: ${balance:.2f}")
+                logger.info(f"🎯 Next trade ID will be: T{next_trade_id}")
+        
+        # Also load state file if exists
+        if os.path.exists(STATE_FILE) and os.path.getsize(STATE_FILE) > 0:
+            with open(STATE_FILE, 'r') as f:
+                state_data = json.load(f)
+                if 'next_trade_id' in state_data:
+                    # Use the next_trade_id from state file if available
+                    next_trade_id = max(next_trade_id, state_data['next_trade_id'])
+                    logger.info(f"📝 Using next trade ID from state file: T{next_trade_id}")
+        
+        trading_state['git_last_pull'] = datetime.now().strftime('%H:%M:%S')
+        logger.info("✅ Git load successful")
+        return {'success': True, 'message': 'Git load successful', 'trades_loaded': trades_loaded}
                     
-        finally:
-            os.chdir(original_dir)
-            
     except Exception as e:
-        logger.error(f"❌ Git pull error: {e}")
+        logger.error(f"❌ Git load error: {e}")
         return {'success': False, 'message': str(e)}
 
-def push_trade_to_git(trade):
-    """Push a single trade to Git repo"""
+def push_trade_to_git():
+    """Push all trades to Git repo"""
     if not trading_state['git_push_enabled']:
         return
     
-    # Add trade to history
-    trade_history.append(trade)
-    
     # Execute Git push
-    result = execute_git_push(trade)
+    result = execute_git_push()
     
     if result.get('success'):
-        logger.info(f"✅ Trade #{trade.get('id', 'N/A')} pushed to Git successfully")
+        logger.info(f"✅ Trades pushed to Git successfully (Total: {len(trade_history)})")
     else:
-        logger.warning(f"⚠️  Failed to push trade to Git: {result.get('message')}")
+        logger.warning(f"⚠️  Failed to push trades to Git: {result.get('message')}")
 
 # ==================== CACHED FOREX DATA FETCHING ====================
 def get_cached_eurusd_price():
@@ -575,14 +618,13 @@ def calculate_advanced_indicators(prices):
 
 # ==================== ML TRAINING SYSTEM ====================
 def initialize_ml_system():
-    """Initialize ML system by pulling data from Git and training"""
+    """Initialize ML system by loading data from Git and training"""
     global ml_features, tp_labels, sl_labels, ml_trained
     
-    # First, pull data from Git repo
-    if trading_state['git_push_enabled']:
-        pull_result = pull_git_trades()
-        if pull_result.get('success'):
-            logger.info(f"📊 Loaded {len(trade_history)} trades from Git for ML training")
+    # First, load data from Git repo
+    load_result = load_trades_from_git()
+    if load_result.get('success'):
+        logger.info(f"📊 Loaded {len(trade_history)} trades from Git for ML training")
     
     # Extract features from historical trades
     extract_features_from_trades()
@@ -607,7 +649,7 @@ def extract_features_from_trades():
     sl_labels = []
     
     for trade in trade_history:
-        if trade.get('result') not in ['SUCCESS', 'FAILED', 'PARTIAL_SUCCESS', 'PARTIAL_FAIL']:
+        if trade.get('status') != 'CLOSED' or trade.get('result') not in ['SUCCESS', 'FAILED', 'PARTIAL_SUCCESS', 'PARTIAL_FAIL', 'SUCCESS_FAST']:
             continue
         
         # Extract features from trade data
@@ -624,26 +666,29 @@ def extract_features_from_trades():
                 trade.get('max_profit_pips', 0) / 100,
                 trade.get('max_loss_pips', 0) / 100,
                 # Add market condition features
-                1 if trade.get('result') in ['SUCCESS', 'PARTIAL_SUCCESS'] else 0,
-                trade.get('win_rate', 0) / 100
+                1 if trade.get('result') in ['SUCCESS', 'SUCCESS_FAST', 'PARTIAL_SUCCESS'] else 0,
+                trading_state['win_rate'] / 100
             ]
             
             # Add features to ML training set
             ml_features.append(features)
             
             # Determine optimal TP/SL based on trade result
-            if trade['result'] == 'SUCCESS':
+            if trade['result'] == 'SUCCESS_FAST':  # TP hit in first half
                 optimal_tp = trade.get('tp_distance_pips', 10)
-                optimal_sl = trade.get('sl_distance_pips', 10)
-            elif trade['result'] == 'FAILED':
-                optimal_tp = trade.get('tp_distance_pips', 10) * 0.7
-                optimal_sl = trade.get('sl_distance_pips', 10) * 1.3
-            elif trade['result'] == 'PARTIAL_SUCCESS':
+                optimal_sl = trade.get('sl_distance_pips', 10) * 0.9
+            elif trade['result'] == 'SUCCESS':  # TP hit but took time
                 optimal_tp = trade.get('tp_distance_pips', 10) * 0.9
-                optimal_sl = trade.get('sl_distance_pips', 10)
-            else:  # PARTIAL_FAIL or BREAKEVEN
-                optimal_tp = trade.get('tp_distance_pips', 10)
                 optimal_sl = trade.get('sl_distance_pips', 10) * 1.1
+            elif trade['result'] == 'PARTIAL_FAIL':  # Time ended with profit but TP not hit
+                optimal_tp = trade.get('tp_distance_pips', 10) * 0.7
+                optimal_sl = trade.get('sl_distance_pips', 10) * 0.8
+            elif trade['result'] == 'FAILED':  # SL hit or ended with loss
+                optimal_tp = trade.get('tp_distance_pips', 10) * 0.6
+                optimal_sl = trade.get('sl_distance_pips', 10) * 1.5
+            else:  # PARTIAL_SUCCESS or other
+                optimal_tp = trade.get('tp_distance_pips', 10) * 0.8
+                optimal_sl = trade.get('sl_distance_pips', 10) * 1.0
             
             tp_labels.append(optimal_tp)
             sl_labels.append(optimal_sl)
@@ -906,6 +951,8 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
         trading_state['trade_status'] = 'NO_SIGNAL'
         return None
     
+    global next_trade_id
+    
     # Determine action
     if direction == 'BULLISH':
         action = 'BUY'
@@ -914,7 +961,9 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
         action = 'SELL'
         action_reason = f"Strong 2-min BEARISH signal ({confidence:.1f}% confidence)"
     
-    trade_id = f"T{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    # Use the next trade ID (continues from Git)
+    trade_id = f"T{next_trade_id}"
+    next_trade_id += 1  # Increment for next trade
     
     trade = {
         'id': trade_id,
@@ -957,7 +1006,7 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
     trading_state['trade_status'] = 'ACTIVE'
     
     logger.info(f"🔔 {action} ORDER EXECUTED")
-    logger.info(f"   Trade ID: {trade_id}")
+    logger.info(f"   Trade ID: {trade_id} (Continuing from Git: total {len(trade_history) + 1})")
     logger.info(f"   Entry Price: {current_price:.5f}")
     logger.info(f"   Take Profit: {optimal_tp:.5f} ({tp_pips} pips)")
     logger.info(f"   Stop Loss: {optimal_sl:.5f} ({sl_pips} pips)")
@@ -972,7 +1021,7 @@ def monitor_active_trade(current_price):
         return None
     
     trade = trading_state['current_trade']
-    entry_time = datetime.fromisoformat(trade['entry_time']) if isinstance(trade['entry_time'], str) else trade['entry_time']
+    entry_time = datetime.fromisoformat(trade['entry_time'])
     trade_duration = (datetime.now() - entry_time).total_seconds()
     
     # Calculate current P&L
@@ -1066,9 +1115,9 @@ def monitor_active_trade(current_price):
         # Add to history
         trade_history.append(trade.copy())
         
-        # Push trade to Git repo
+        # Push all trades to Git repo
         trade['git_pushed'] = True
-        push_trade_to_git(trade)
+        push_trade_to_git()
         
         # Learn from this trade for ML improvement
         learn_from_trade(trade)
@@ -1081,6 +1130,7 @@ def monitor_active_trade(current_price):
         
         logger.info(f"📊 TRADE COMPLETED: {exit_reason}")
         logger.info(f"   Result: {trade_result}")
+        logger.info(f"   Total Trades: {trading_state['total_trades']}")
         logger.info(f"   Balance: ${trading_state['balance']:.2f}")
         logger.info(f"   Win Rate: {trading_state['win_rate']:.1f}%")
         
@@ -1135,7 +1185,7 @@ def learn_from_trade(trade):
             optimal_sl = trade['sl_distance_pips'] * 1.5  # Much larger SL
             logger.info(f"❌ Failed trade. Drastically adjusting TP/SL.")
             
-        else:  # BREAKEVEN or other
+        else:  # PARTIAL_SUCCESS or other
             optimal_tp = trade['tp_distance_pips'] * 0.8
             optimal_sl = trade['sl_distance_pips'] * 1.0
         
@@ -1163,15 +1213,19 @@ def trading_cycle():
     if trading_state['git_push_enabled']:
         setup_git_repo()
     
-    # Initialize ML system by pulling data from Git
+    # Initialize ML system by loading data from Git
     initialize_ml_system()
     
-    cycle_count = 0
+    cycle_count = trading_state['cycle_count']  # Start from existing cycle count
     
     logger.info("✅ Trading bot started with 2-minute cycles and Git integration")
     logger.info(f"📊 Starting with {len(trade_history)} historical trades from Git")
+    logger.info(f"🎯 Total Trades: {trading_state['total_trades']}")
+    logger.info(f"💰 Balance: ${trading_state['balance']:.2f}")
+    logger.info(f"📈 Win Rate: {trading_state['win_rate']:.1f}%")
     logger.info(f"🤖 ML Ready: {ml_trained} ({len(ml_features)} samples)")
     logger.info(f"🚀 Git Push: {'✅ Enabled' if trading_state['git_push_enabled'] else '❌ Disabled'}")
+    logger.info(f"🆔 Next Trade ID: T{next_trade_id}")
     
     while True:
         try:
@@ -1184,6 +1238,7 @@ def trading_cycle():
             
             logger.info(f"\n{'='*70}")
             logger.info(f"2-MINUTE TRADING CYCLE #{cycle_count}")
+            logger.info(f"TOTAL TRADES: {trading_state['total_trades']} (Continuing from Git)")
             logger.info(f"{'='*70}")
             
             # 1. GET MARKET DATA (WITH CACHE)
@@ -1259,10 +1314,12 @@ def trading_cycle():
             logger.info(f"  Prediction: {direction} ({confidence:.1f}% confidence)")
             logger.info(f"  Action: {trading_state['action']}")
             logger.info(f"  TP/SL: {tp_pips}/{sl_pips} pips (Goal: Hit TP in <2min)")
+            logger.info(f"  Total Trades: {trading_state['total_trades']} (Continuing from Git)")
             logger.info(f"  Balance: ${trading_state['balance']:.2f}")
             logger.info(f"  Win Rate: {trading_state['win_rate']:.1f}%")
             logger.info(f"  ML Ready: {trading_state['ml_model_ready']} ({len(ml_features)} samples)")
             logger.info(f"  Git Pushes: {trading_state['git_total_pushes']}")
+            logger.info(f"  Next trade ID: T{next_trade_id}")
             logger.info(f"  Next cycle in: {next_cycle_time}s")
             logger.info(f"{'='*70}")
             
@@ -1274,10 +1331,7 @@ def trading_cycle():
                 
                 # Update active trade progress if exists
                 if trading_state['current_trade']:
-                    if isinstance(trading_state['current_trade']['entry_time'], str):
-                        entry_time = datetime.fromisoformat(trading_state['current_trade']['entry_time'])
-                    else:
-                        entry_time = trading_state['current_trade']['entry_time']
+                    entry_time = datetime.fromisoformat(trading_state['current_trade']['entry_time'])
                     trade_duration = (datetime.now() - entry_time).total_seconds()
                     trading_state['trade_progress'] = (trade_duration / CYCLE_SECONDS) * 100
                 
@@ -1319,7 +1373,8 @@ def get_trade_history():
             'trades': trade_history[-20:],  # Return last 20 trades
             'total': len(trade_history),
             'profitable': trading_state['profitable_trades'],
-            'win_rate': trading_state['win_rate']
+            'win_rate': trading_state['win_rate'],
+            'next_trade_id': f"T{next_trade_id}"
         })
     except Exception as e:
         logger.error(f"Trade history error: {e}")
@@ -1334,7 +1389,8 @@ def get_ml_status():
         'total_trades': len(trade_history),
         'git_pushes': trading_state['git_total_pushes'],
         'git_last_push': trading_state['git_last_push'],
-        'git_enabled': trading_state['git_push_enabled']
+        'git_enabled': trading_state['git_push_enabled'],
+        'next_trade_id': f"T{next_trade_id}"
     })
 
 @app.route('/api/git_push_now', methods=['POST'])
@@ -1343,10 +1399,10 @@ def git_push_now():
     result = execute_git_push()
     return jsonify(result)
 
-@app.route('/api/git_pull_now', methods=['POST'])
-def git_pull_now():
-    """Manual Git pull endpoint"""
-    result = pull_git_trades()
+@app.route('/api/git_load_now', methods=['POST'])
+def git_load_now():
+    """Manual Git load endpoint"""
+    result = load_trades_from_git()
     if result.get('success'):
         # Re-initialize ML with new data
         extract_features_from_trades()
@@ -1356,8 +1412,8 @@ def git_pull_now():
 
 @app.route('/api/reset_trading')
 def reset_trading():
-    """Reset trading statistics"""
-    global trade_history, ml_features, tp_labels, sl_labels
+    """Reset trading statistics (for testing)"""
+    global trade_history, ml_features, tp_labels, sl_labels, next_trade_id
     
     trading_state.update({
         'balance': INITIAL_BALANCE,
@@ -1375,8 +1431,16 @@ def reset_trading():
     ml_features.clear()
     tp_labels.clear()
     sl_labels.clear()
+    next_trade_id = 1
     
-    return jsonify({'success': True, 'message': 'Trading reset complete'})
+    # Also push reset state to Git
+    push_trade_to_git()
+    
+    return jsonify({
+        'success': True, 
+        'message': 'Trading reset complete',
+        'next_trade_id': f"T{next_trade_id}"
+    })
 
 @app.route('/api/health')
 def health_check():
@@ -1388,7 +1452,9 @@ def health_check():
         'git_enabled': trading_state['git_push_enabled'],
         'git_pushes': trading_state['git_total_pushes'],
         'total_trades': len(trade_history),
+        'total_trades_state': trading_state['total_trades'],
         'ml_ready': trading_state['ml_model_ready'],
+        'next_trade_id': f"T{next_trade_id}",
         'cache_enabled': True,
         'cache_duration': CACHE_DURATION
     })
@@ -1401,10 +1467,11 @@ def start_trading_bot():
         thread.start()
         logger.info("✅ Trading bot started successfully")
         print("="*80)
-        print("2-MINUTE TRADING SYSTEM WITH GIT PUSH/PULL")
+        print("2-MINUTE TRADING SYSTEM WITH CONTINUOUS TRADE COUNTING")
         print("="*80)
         print(f"✅ Git Push: {'ENABLED' if trading_state['git_push_enabled'] else 'DISABLED'}")
-        print(f"✅ ML Training: Using data from Git repo")
+        print(f"✅ Trade Counting: CONTINUES from Git after sleep/wake")
+        print(f"✅ Next Trade ID: T{next_trade_id}")
         print(f"✅ Goal: Hit TP BEFORE 2 minutes, avoid SL completely")
         print(f"✅ Trade data saved to: data/trades.json in Git")
         print(f"✅ Repo: {GITHUB_REPO_URL}")
@@ -1423,8 +1490,10 @@ if __name__ == '__main__':
     print(f"🌐 Web dashboard: http://localhost:{port}")
     print("="*80)
     print("SYSTEM READY")
-    print(f"• Pushing trade data to: {GITHUB_REPO_URL}")
-    print(f"• Pulling data from Git for ML training")
+    print(f"• Trade counting CONTINUES after sleep/wake cycles")
+    print(f"• Next trade will be: T{next_trade_id}")
+    print(f"• Pulling trade data from: {GITHUB_REPO_URL}")
+    print(f"• Pushing trade data after each trade")
     print(f"• Goal: Constant accurate predictions hitting TP before 2 minutes")
     print("="*80)
     
