@@ -302,120 +302,6 @@ def save_all_data_local():
 
 # ==================== GIT PUSH FUNCTIONS USING ACTUAL GIT COMMANDS ====================
 def setup_git_for_push():
-# Add this function right after the setup_git_for_push() function (around line 200)
-
-# ==================== PRICE FETCHING FUNCTIONS ====================
-def get_cached_eurusd_price():
-    """Get EUR/USD price with 30-second caching"""
-    global price_cache
-    
-    current_time = time.time()
-    
-    # Return cached price if still valid
-    if current_time - price_cache['timestamp'] < price_cache['expiry']:
-        price_cache['hits'] += 1
-        trading_state['cache_hits'] = price_cache['hits']
-        trading_state['cache_efficiency'] = f"{int((price_cache['hits']/(price_cache['hits']+price_cache['misses']+0.001))*100)}%"
-        return price_cache['price'], f"Cached ({price_cache['source']})"
-    
-    # Cache expired, get new price
-    price_cache['misses'] += 1
-    trading_state['cache_misses'] = price_cache['misses']
-    trading_state['cache_efficiency'] = f"{int((price_cache['hits']/(price_cache['hits']+price_cache['misses']+0.001))*100)}%"
-    
-    try:
-        # Try to get real price from API
-        trading_state['api_status'] = 'CONNECTING'
-        
-        # Option 1: Try FX market API
-        try:
-            response = requests.get(
-                "https://api.fxratesapi.com/latest?base=EUR&symbols=USD",
-                timeout=5
-            )
-            if response.status_code == 200:
-                data = response.json()
-                price = float(data['rates']['USD'])
-                source = 'FX Rates API'
-                trading_state['api_status'] = 'CONNECTED'
-                trading_state['is_demo_data'] = False
-            else:
-                raise Exception(f"API error: {response.status_code}")
-        except Exception as e1:
-            logger.warning(f"FX API failed: {e1}")
-            
-            # Option 2: Try financial data API
-            try:
-                response = requests.get(
-                    "https://api.twelvedata.com/price?symbol=EUR/USD&apikey=demo",
-                    timeout=5
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    price = float(data['price'])
-                    source = 'Twelve Data API'
-                    trading_state['api_status'] = 'CONNECTED'
-                    trading_state['is_demo_data'] = False
-                else:
-                    raise Exception(f"API error: {response.status_code}")
-            except Exception as e2:
-                logger.warning(f"Financial API failed: {e2}")
-                
-                # Option 3: Fallback to simulated price
-                # Add slight random movement to previous price
-                previous_price = price_cache['price']
-                movement = np.random.normal(0, 0.0002)  # Small random walk
-                price = previous_price + movement
-                
-                # Keep within realistic EUR/USD range
-                price = max(1.0500, min(1.1200, price))
-                
-                source = 'Simulated'
-                trading_state['api_status'] = 'OFFLINE (SIMULATED)'
-                trading_state['is_demo_data'] = True
-        
-        # Update cache
-        price_cache['price'] = round(price, 5)
-        price_cache['timestamp'] = current_time
-        price_cache['source'] = source
-        price_cache['expiry'] = CACHE_DURATION
-        
-        return price_cache['price'], source
-        
-    except Exception as e:
-        logger.error(f"❌ Price fetching error: {e}")
-        # Return cached price even if expired
-        return price_cache['price'], f"Error: Using cached ({price_cache['source']})"
-
-
-def create_price_series(current_price, periods=120):
-    """Create a realistic price series for analysis"""
-    np.random.seed(int(time.time()))
-    
-    # Generate realistic price movements
-    base_prices = [current_price]
-    for i in range(periods - 1):
-        movement = np.random.normal(0, 0.00015)  # Small daily volatility
-        new_price = base_prices[-1] + movement
-        base_prices.append(new_price)
-    
-    # Add some micro-trends
-    prices = np.array(base_prices)
-    
-    # Add small sine wave for seasonality
-    t = np.arange(periods)
-    seasonal = 0.0001 * np.sin(2 * np.pi * t / 30)  # 30-period seasonality
-    
-    # Add noise
-    noise = np.random.normal(0, 0.00005, periods)
-    
-    final_prices = prices + seasonal + noise
-    
-    # Ensure all prices are positive
-    final_prices = np.maximum(final_prices, current_price * 0.99)
-    final_prices = np.minimum(final_prices, current_price * 1.01)
-    
-    return pd.Series(final_prices, name='price')
     """Setup Git repository for pushing using actual Git commands"""
     try:
         if not GITHUB_TOKEN:
@@ -606,6 +492,118 @@ def execute_git_push():
         logger.error(f"❌ Git push error: {e}")
         return {'success': False, 'message': str(e)}
 
+# ==================== PRICE FETCHING FUNCTIONS ====================
+def get_cached_eurusd_price():
+    """Get EUR/USD price with 30-second caching"""
+    global price_cache
+    
+    current_time = time.time()
+    
+    # Return cached price if still valid
+    if current_time - price_cache['timestamp'] < price_cache['expiry']:
+        price_cache['hits'] += 1
+        trading_state['cache_hits'] = price_cache['hits']
+        trading_state['cache_efficiency'] = f"{int((price_cache['hits']/(price_cache['hits']+price_cache['misses']+0.001))*100)}%"
+        return price_cache['price'], f"Cached ({price_cache['source']})"
+    
+    # Cache expired, get new price
+    price_cache['misses'] += 1
+    trading_state['cache_misses'] = price_cache['misses']
+    trading_state['cache_efficiency'] = f"{int((price_cache['hits']/(price_cache['hits']+price_cache['misses']+0.001))*100)}%"
+    
+    try:
+        # Try to get real price from API
+        trading_state['api_status'] = 'CONNECTING'
+        
+        # Option 1: Try FX market API
+        try:
+            response = requests.get(
+                "https://api.fxratesapi.com/latest?base=EUR&symbols=USD",
+                timeout=5
+            )
+            if response.status_code == 200:
+                data = response.json()
+                price = float(data['rates']['USD'])
+                source = 'FX Rates API'
+                trading_state['api_status'] = 'CONNECTED'
+                trading_state['is_demo_data'] = False
+            else:
+                raise Exception(f"API error: {response.status_code}")
+        except Exception as e1:
+            logger.warning(f"FX API failed: {e1}")
+            
+            # Option 2: Try financial data API
+            try:
+                response = requests.get(
+                    "https://api.twelvedata.com/price?symbol=EUR/USD&apikey=demo",
+                    timeout=5
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    price = float(data['price'])
+                    source = 'Twelve Data API'
+                    trading_state['api_status'] = 'CONNECTED'
+                    trading_state['is_demo_data'] = False
+                else:
+                    raise Exception(f"API error: {response.status_code}")
+            except Exception as e2:
+                logger.warning(f"Financial API failed: {e2}")
+                
+                # Option 3: Fallback to simulated price
+                # Add slight random movement to previous price
+                previous_price = price_cache['price']
+                movement = np.random.normal(0, 0.0002)  # Small random walk
+                price = previous_price + movement
+                
+                # Keep within realistic EUR/USD range
+                price = max(1.0500, min(1.1200, price))
+                
+                source = 'Simulated'
+                trading_state['api_status'] = 'OFFLINE (SIMULATED)'
+                trading_state['is_demo_data'] = True
+        
+        # Update cache
+        price_cache['price'] = round(price, 5)
+        price_cache['timestamp'] = current_time
+        price_cache['source'] = source
+        price_cache['expiry'] = CACHE_DURATION
+        
+        return price_cache['price'], source
+        
+    except Exception as e:
+        logger.error(f"❌ Price fetching error: {e}")
+        # Return cached price even if expired
+        return price_cache['price'], f"Error: Using cached ({price_cache['source']})"
+
+def create_price_series(current_price, periods=120):
+    """Create a realistic price series for analysis"""
+    np.random.seed(int(time.time()))
+    
+    # Generate realistic price movements
+    base_prices = [current_price]
+    for i in range(periods - 1):
+        movement = np.random.normal(0, 0.00015)  # Small daily volatility
+        new_price = base_prices[-1] + movement
+        base_prices.append(new_price)
+    
+    # Add some micro-trends
+    prices = np.array(base_prices)
+    
+    # Add small sine wave for seasonality
+    t = np.arange(periods)
+    seasonal = 0.0001 * np.sin(2 * np.pi * t / 30)  # 30-period seasonality
+    
+    # Add noise
+    noise = np.random.normal(0, 0.00005, periods)
+    
+    final_prices = prices + seasonal + noise
+    
+    # Ensure all prices are positive
+    final_prices = np.maximum(final_prices, current_price * 0.99)
+    final_prices = np.minimum(final_prices, current_price * 1.01)
+    
+    return pd.Series(final_prices, name='price')
+
 def queue_git_push(trade_id=None):
     """Queue a Git push to happen after trade completion"""
     if not trading_state['git_enabled']:
@@ -727,11 +725,547 @@ def train_ml_models():
         ml_trained = False
         trading_state['ml_model_ready'] = False
 
-# [Add all other trading functions from previous version...]
-# get_cached_eurusd_price(), create_price_series(), calculate_advanced_indicators(),
-# extract_ml_features(), analyze_2min_prediction(), predict_optimal_levels(),
-# predict_with_indicators(), execute_2min_trade(), monitor_active_trade(),
-# learn_from_trade(), create_trading_chart()
+def calculate_advanced_indicators(price_series):
+    """Calculate technical indicators"""
+    df = pd.DataFrame({'price': price_series})
+    
+    # RSI
+    df['rsi'] = ta.rsi(df['price'], length=14)
+    
+    # MACD
+    macd = ta.macd(df['price'], fast=12, slow=26, signal=9)
+    df['macd'] = macd['MACD_12_26_9']
+    df['macd_signal'] = macd['MACDs_12_26_9']
+    df['macd_histogram'] = macd['MACDh_12_26_9']
+    
+    # Bollinger Bands
+    bb = ta.bbands(df['price'], length=20, std=2)
+    df['bb_upper'] = bb['BBU_20_2.0']
+    df['bb_middle'] = bb['BBM_20_2.0']
+    df['bb_lower'] = bb['BBL_20_2.0']
+    
+    # ATR for volatility
+    df['atr'] = ta.atr(df['price'].rolling(2).max(), df['price'].rolling(2).min(), 
+                       df['price'], length=14)
+    
+    # SMA
+    df['sma_20'] = ta.sma(df['price'], length=20)
+    df['sma_50'] = ta.sma(df['price'], length=50)
+    
+    # EMA
+    df['ema_12'] = ta.ema(df['price'], length=12)
+    df['ema_26'] = ta.ema(df['price'], length=26)
+    
+    # Stochastic
+    stoch = ta.stoch(df['price'].rolling(2).max(), df['price'].rolling(2).min(), 
+                     df['price'], k=14, d=3)
+    df['stoch_k'] = stoch['STOCHk_14_3_3']
+    df['stoch_d'] = stoch['STOCHd_14_3_3']
+    
+    # Fill NaN values
+    df = df.fillna(method='bfill').fillna(method='ffill')
+    
+    return df
+
+def extract_ml_features(df, current_price):
+    """Extract features for ML model"""
+    features = []
+    
+    # Price position features
+    last_row = df.iloc[-1]
+    
+    # RSI feature
+    rsi_val = last_row['rsi']
+    features.append(rsi_val)
+    
+    # MACD features
+    macd_val = last_row['macd']
+    macd_signal = last_row['macd_signal']
+    features.append(macd_val)
+    features.append(macd_signal)
+    features.append(macd_val - macd_signal)
+    
+    # Bollinger Band position
+    bb_upper = last_row['bb_upper']
+    bb_lower = last_row['bb_lower']
+    bb_middle = last_row['bb_middle']
+    
+    bb_position = (current_price - bb_lower) / (bb_upper - bb_lower + 1e-6)
+    features.append(bb_position)
+    
+    # ATR (volatility)
+    atr_val = last_row['atr']
+    features.append(atr_val)
+    
+    # SMA position
+    sma_20 = last_row['sma_20']
+    sma_50 = last_row['sma_50']
+    
+    features.append(current_price - sma_20)
+    features.append(current_price - sma_50)
+    features.append(sma_20 - sma_50)
+    
+    # EMA position
+    ema_12 = last_row['ema_12']
+    ema_26 = last_row['ema_26']
+    
+    features.append(current_price - ema_12)
+    features.append(current_price - ema_26)
+    features.append(ema_12 - ema_26)
+    
+    # Stochastic
+    stoch_k = last_row['stoch_k']
+    stoch_d = last_row['stoch_d']
+    
+    features.append(stoch_k)
+    features.append(stoch_d)
+    features.append(stoch_k - stoch_d)
+    
+    # Recent price action
+    price_change = df['price'].iloc[-1] - df['price'].iloc[-10]
+    features.append(price_change)
+    
+    return features
+
+def analyze_2min_prediction(df, current_price):
+    """Analyze and predict next 2-minute movement"""
+    last_row = df.iloc[-1]
+    
+    # Initialize scores
+    bullish_score = 0
+    bearish_score = 0
+    signal_strength = 0
+    
+    # RSI analysis
+    rsi_val = last_row['rsi']
+    if rsi_val < 30:
+        bullish_score += 2
+        signal_strength += 1
+    elif rsi_val > 70:
+        bearish_score += 2
+        signal_strength += 1
+    
+    # MACD analysis
+    macd_val = last_row['macd']
+    macd_signal = last_row['macd_signal']
+    
+    if macd_val > macd_signal:
+        bullish_score += 1
+        signal_strength += 1
+    elif macd_val < macd_signal:
+        bearish_score += 1
+        signal_strength += 1
+    
+    # Bollinger Bands analysis
+    bb_upper = last_row['bb_upper']
+    bb_lower = last_row['bb_lower']
+    
+    if current_price < bb_lower * 1.001:
+        bullish_score += 2
+        signal_strength += 1
+    elif current_price > bb_upper * 0.999:
+        bearish_score += 2
+        signal_strength += 1
+    
+    # SMA analysis
+    sma_20 = last_row['sma_20']
+    sma_50 = last_row['sma_50']
+    
+    if current_price > sma_20 > sma_50:
+        bullish_score += 1
+    elif current_price < sma_20 < sma_50:
+        bearish_score += 1
+    
+    # EMA analysis
+    ema_12 = last_row['ema_12']
+    ema_26 = last_row['ema_26']
+    
+    if ema_12 > ema_26:
+        bullish_score += 1
+    else:
+        bearish_score += 1
+    
+    # Stochastic analysis
+    stoch_k = last_row['stoch_k']
+    stoch_d = last_row['stoch_d']
+    
+    if stoch_k < 20 and stoch_k > stoch_d:
+        bullish_score += 1
+        signal_strength += 1
+    elif stoch_k > 80 and stoch_k < stoch_d:
+        bearish_score += 1
+        signal_strength += 1
+    
+    # Determine prediction
+    if bullish_score > bearish_score:
+        direction = 'BULLISH'
+        confidence = min(95.0, 50.0 + (bullish_score - bearish_score) * 8.0)
+    elif bearish_score > bullish_score:
+        direction = 'BEARISH'
+        confidence = min(95.0, 50.0 + (bearish_score - bullish_score) * 8.0)
+    else:
+        direction = 'NEUTRAL'
+        confidence = 50.0
+    
+    # Adjust signal strength
+    signal_strength = min(3, signal_strength)
+    
+    # Add some randomness for demo
+    if trading_state['is_demo_data']:
+        confidence = min(95.0, confidence + np.random.uniform(-5, 5))
+    
+    return True, confidence, direction, signal_strength
+
+def predict_optimal_levels(features, direction, current_price, df):
+    """Predict optimal TP/SL levels"""
+    if not ml_trained or len(features) == 0:
+        # Default levels if ML not trained
+        base_pips = 8  # 8 pips default
+        
+        if direction == 'BULLISH':
+            tp = current_price + base_pips * 0.0001
+            sl = current_price - base_pips * 0.0001
+        elif direction == 'BEARISH':
+            tp = current_price - base_pips * 0.0001
+            sl = current_price + base_pips * 0.0001
+        else:
+            tp = current_price + base_pips * 0.0001
+            sl = current_price - base_pips * 0.0001
+        
+        tp_pips = base_pips
+        sl_pips = base_pips
+        
+        return tp, sl, tp_pips, sl_pips
+    
+    try:
+        # Use ML model to predict
+        features_array = np.array(features).reshape(1, -1)
+        features_scaled = ml_scaler.transform(features_array)
+        
+        tp_multiplier = tp_model.predict(features_scaled)[0]
+        sl_multiplier = sl_model.predict(features_scaled)[0]
+        
+        # Calculate volatility from ATR
+        atr_val = df['atr'].iloc[-1] if 'atr' in df.columns else 0.0002
+        
+        # Base pips based on volatility
+        base_pips = max(5, min(20, int(atr_val * 10000 * 1.5)))
+        
+        # Apply ML multipliers
+        tp_pips = int(base_pips * tp_multiplier)
+        sl_pips = int(base_pips * sl_multiplier)
+        
+        # Ensure reasonable ranges
+        tp_pips = max(5, min(30, tp_pips))
+        sl_pips = max(5, min(25, sl_pips))
+        
+        # Calculate price levels
+        if direction == 'BULLISH':
+            tp = current_price + tp_pips * 0.0001
+            sl = current_price - sl_pips * 0.0001
+        elif direction == 'BEARISH':
+            tp = current_price - tp_pips * 0.0001
+            sl = current_price + sl_pips * 0.0001
+        else:
+            tp = current_price + tp_pips * 0.0001
+            sl = current_price - sl_pips * 0.0001
+        
+        return tp, sl, tp_pips, sl_pips
+        
+    except Exception as e:
+        logger.error(f"❌ ML prediction error: {e}")
+        # Fallback to default
+        base_pips = 10
+        if direction == 'BULLISH':
+            tp = current_price + base_pips * 0.0001
+            sl = current_price - base_pips * 0.0001
+        else:
+            tp = current_price - base_pips * 0.0001
+            sl = current_price + base_pips * 0.0001
+        
+        return tp, sl, base_pips, base_pips
+
+def execute_2min_trade(direction, confidence, entry_price, tp_price, sl_price, tp_pips, sl_pips, signal_strength):
+    """Execute a trade"""
+    global trade_history
+    
+    try:
+        trade_id = f"T{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        
+        # Calculate position size based on confidence
+        position_size = BASE_TRADE_SIZE * min(1.0, confidence / 100.0)
+        
+        # Create trade object
+        trade = {
+            'id': trade_id,
+            'entry_time': datetime.now(),
+            'direction': direction,
+            'entry_price': round(float(entry_price), 5),
+            'position_size': round(float(position_size), 2),
+            'tp_price': round(float(tp_price), 5),
+            'sl_price': round(float(sl_price), 5),
+            'tp_pips': tp_pips,
+            'sl_pips': sl_pips,
+            'status': 'ACTIVE',
+            'result': 'PENDING',
+            'profit_amount': 0.0,
+            'profit_pips': 0,
+            'confidence': round(float(confidence), 1),
+            'signal_strength': signal_strength,
+            'risk_reward_ratio': f"1:{round(tp_pips/sl_pips, 1) if sl_pips > 0 else 'INF'}"
+        }
+        
+        # Update state
+        trading_state['current_trade'] = trade
+        trading_state['action'] = f'OPEN {direction}'
+        trading_state['trade_status'] = 'ACTIVE'
+        trading_state['optimal_tp'] = tp_price
+        trading_state['optimal_sl'] = sl_price
+        trading_state['tp_distance_pips'] = tp_pips
+        trading_state['sl_distance_pips'] = sl_pips
+        
+        # Add to history
+        trade_history.append(trade)
+        
+        # Update metrics
+        trading_state['total_trades'] += 1
+        
+        logger.info(f"🎯 OPENED TRADE #{trade_id}")
+        logger.info(f"   Direction: {direction}")
+        logger.info(f"   Entry: {entry_price:.5f}")
+        logger.info(f"   TP: {tp_price:.5f} ({tp_pips} pips)")
+        logger.info(f"   SL: {sl_price:.5f} ({sl_pips} pips)")
+        logger.info(f"   Size: ${position_size:.2f}")
+        logger.info(f"   Confidence: {confidence:.1f}%")
+        
+        # Queue Git push
+        queue_git_push(trade_id)
+        
+        return trade_id
+        
+    except Exception as e:
+        logger.error(f"❌ Trade execution error: {e}")
+        return None
+
+def monitor_active_trade(current_price):
+    """Monitor and update active trade"""
+    global trade_history
+    
+    try:
+        trade = trading_state['current_trade']
+        if not trade or trade['status'] != 'ACTIVE':
+            return
+        
+        entry_price = trade['entry_price']
+        tp_price = trade['tp_price']
+        sl_price = trade['sl_price']
+        direction = trade['direction']
+        
+        # Calculate current profit/loss
+        if direction == 'BULLISH':
+            profit_pips = int((current_price - entry_price) * 10000)
+            profit_amount = trade['position_size'] * (current_price - entry_price) / entry_price * 100
+        else:  # BEARISH
+            profit_pips = int((entry_price - current_price) * 10000)
+            profit_amount = trade['position_size'] * (entry_price - current_price) / entry_price * 100
+        
+        # Update trade progress
+        if direction == 'BULLISH':
+            progress_to_tp = max(0, min(100, (current_price - entry_price) / (tp_price - entry_price) * 100))
+            progress_to_sl = max(0, min(100, (entry_price - current_price) / (entry_price - sl_price) * 100))
+        else:
+            progress_to_tp = max(0, min(100, (entry_price - current_price) / (entry_price - tp_price) * 100))
+            progress_to_sl = max(0, min(100, (current_price - entry_price) / (sl_price - entry_price) * 100))
+        
+        trading_state['trade_progress'] = round(progress_to_tp, 1)
+        
+        # Check for TP/SL hit
+        if (direction == 'BULLISH' and current_price >= tp_price) or \
+           (direction == 'BEARISH' and current_price <= tp_price):
+            # Take Profit hit
+            close_trade('TP_HIT', profit_pips, profit_amount, current_price)
+            
+        elif (direction == 'BULLISH' and current_price <= sl_price) or \
+             (direction == 'BEARISH' and current_price >= sl_price):
+            # Stop Loss hit
+            close_trade('SL_HIT', profit_pips, profit_amount, current_price)
+        
+    except Exception as e:
+        logger.error(f"❌ Trade monitoring error: {e}")
+
+def close_trade(close_reason, profit_pips, profit_amount, exit_price):
+    """Close the active trade"""
+    global trade_history
+    
+    try:
+        trade = trading_state['current_trade']
+        if not trade:
+            return
+        
+        # Update trade
+        trade['exit_time'] = datetime.now()
+        trade['exit_price'] = round(float(exit_price), 5)
+        trade['status'] = 'CLOSED'
+        trade['result'] = 'SUCCESS' if close_reason == 'TP_HIT' else 'STOPPED'
+        trade['profit_pips'] = profit_pips
+        trade['profit_amount'] = round(float(profit_amount), 2)
+        trade['close_reason'] = close_reason
+        
+        # Update balance
+        trading_state['balance'] += trade['profit_amount']
+        
+        # Update metrics
+        if close_reason == 'TP_HIT':
+            trading_state['profitable_trades'] += 1
+        
+        if trading_state['total_trades'] > 0:
+            trading_state['win_rate'] = (trading_state['profitable_trades'] / 
+                                       trading_state['total_trades']) * 100
+        
+        trading_state['total_profit'] += trade['profit_amount']
+        
+        # Learn from trade
+        learn_from_trade(trade)
+        
+        # Update state
+        trading_state['current_trade'] = None
+        trading_state['action'] = 'WAIT'
+        trading_state['trade_status'] = 'CLOSED'
+        trading_state['trade_progress'] = 0
+        
+        logger.info(f"✅ CLOSED TRADE #{trade['id']}")
+        logger.info(f"   Result: {close_reason}")
+        logger.info(f"   Profit: ${trade['profit_amount']:.2f} ({profit_pips} pips)")
+        logger.info(f"   Balance: ${trading_state['balance']:.2f}")
+        logger.info(f"   Win Rate: {trading_state['win_rate']:.1f}%")
+        
+        # Queue Git push for completed trade
+        queue_git_push(trade['id'])
+        
+        # Save data
+        save_all_data_local()
+        
+    except Exception as e:
+        logger.error(f"❌ Trade closing error: {e}")
+
+def learn_from_trade(trade):
+    """Learn from trade outcome for ML"""
+    global ml_features, tp_labels, sl_labels
+    
+    try:
+        # Only learn from trades with valid exit
+        if trade.get('status') != 'CLOSED':
+            return
+        
+        # Get features from the time of entry (stored in price history)
+        if len(price_history_deque) >= 20:
+            # Recreate features from entry time
+            entry_price = trade['entry_price']
+            direction = trade['direction']
+            result = trade.get('result')
+            
+            # For now, use simplified learning
+            # In a real system, you'd store features at entry time
+            
+            # Example learning logic:
+            if result == 'SUCCESS':
+                # Successful trade - keep similar TP/SL ratios
+                tp_ratio = trade.get('tp_pips', 10) / max(trade.get('sl_pips', 10), 1)
+                sl_ratio = 1.0
+            else:
+                # Failed trade - adjust ratios
+                tp_ratio = trade.get('tp_pips', 8) / max(trade.get('sl_pips', 8), 1) * 0.9
+                sl_ratio = 1.1
+            
+            # Store for future training
+            # Note: In a real system, you'd store the actual features used at entry
+            
+            logger.info(f"🤖 Learned from trade #{trade['id']}: {result}")
+            
+            # Retrain ML if enough data
+            if len(ml_features) >= 10:
+                train_ml_models()
+                
+    except Exception as e:
+        logger.error(f"❌ Learning from trade error: {e}")
+
+def create_trading_chart():
+    """Create trading chart with Plotly"""
+    try:
+        if len(price_history_deque) < 10:
+            return None
+        
+        prices = list(price_history_deque)
+        times = list(range(len(prices)))
+        
+        # Create figure
+        fig = go.Figure()
+        
+        # Add price line
+        fig.add_trace(go.Scatter(
+            x=times,
+            y=prices,
+            mode='lines',
+            name='EUR/USD',
+            line=dict(color='#2E86AB', width=2)
+        ))
+        
+        # Add current trade if active
+        if trading_state['current_trade']:
+            trade = trading_state['current_trade']
+            entry_idx = len(prices) - 10 if len(prices) > 10 else 0
+            
+            # Add entry point
+            fig.add_trace(go.Scatter(
+                x=[entry_idx],
+                y=[trade['entry_price']],
+                mode='markers',
+                name=f"Entry ({trade['direction']})",
+                marker=dict(
+                    size=15,
+                    color='green' if trade['direction'] == 'BULLISH' else 'red',
+                    symbol='triangle-up' if trade['direction'] == 'BULLISH' else 'triangle-down'
+                )
+            ))
+            
+            # Add TP line
+            fig.add_trace(go.Scatter(
+                x=[times[0], times[-1]],
+                y=[trade['tp_price'], trade['tp_price']],
+                mode='lines',
+                name='Take Profit',
+                line=dict(color='green', width=2, dash='dash')
+            ))
+            
+            # Add SL line
+            fig.add_trace(go.Scatter(
+                x=[times[0], times[-1]],
+                y=[trade['sl_price'], trade['sl_price']],
+                mode='lines',
+                name='Stop Loss',
+                line=dict(color='red', width=2, dash='dash')
+            ))
+        
+        # Update layout
+        fig.update_layout(
+            title='EUR/USD Price Chart',
+            xaxis_title='Time (recent)',
+            yaxis_title='Price',
+            template='plotly_dark',
+            height=400,
+            margin=dict(l=20, r=20, t=40, b=20),
+            showlegend=True
+        )
+        
+        # Convert to JSON
+        chart_json = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
+        trading_state['chart_data'] = chart_json
+        
+        return chart_json
+        
+    except Exception as e:
+        logger.error(f"❌ Chart creation error: {e}")
+        return None
 
 # ==================== TRADING CYCLE ====================
 def trading_cycle():
@@ -808,7 +1342,7 @@ def trading_cycle():
                 process_git_push_queue()
             
             # Update state
-            trading_state['last_update'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            trading_state['last_update'] = datetime.now().strftime('%Y-%m-d %H:%M:%S')
             trading_state['server_time'] = datetime.now().isoformat()
             
             # Log summary
