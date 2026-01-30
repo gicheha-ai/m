@@ -328,7 +328,7 @@ def execute_git_push():
 
 def load_trades_from_git():
     """Load trade data from Git repo and update all counters"""
-    global trade_history, next_trade_id, trading_state
+    global trade_history, next_trade_id, trading_state, ml_features, tp_labels, sl_labels
     
     try:
         if not trading_state['git_push_enabled']:
@@ -354,6 +354,11 @@ def load_trades_from_git():
                 total_profit = 0.0
                 balance = INITIAL_BALANCE
                 
+                # Clear and rebuild ML features from loaded trades
+                ml_features.clear()
+                tp_labels.clear()
+                sl_labels.clear()
+                
                 # Calculate statistics from all loaded trades
                 for trade in trade_history:
                     if trade.get('status') == 'CLOSED':
@@ -363,6 +368,15 @@ def load_trades_from_git():
                         
                         if trade.get('result') in ['SUCCESS', 'SUCCESS_FAST', 'PARTIAL_SUCCESS']:
                             profitable_trades += 1
+                    
+                    # Extract ML features from trade if it has them
+                    if 'ml_features' in trade and trade['ml_features']:
+                        if len(trade['ml_features']) == 22:
+                            ml_features.append(trade['ml_features'])
+                            if 'optimal_tp_learned' in trade:
+                                tp_labels.append(trade['optimal_tp_learned'])
+                            if 'optimal_sl_learned' in trade:
+                                sl_labels.append(trade['optimal_sl_learned'])
                 
                 # Update trading state with loaded data
                 trading_state['total_trades'] = total_trades
@@ -399,6 +413,7 @@ def load_trades_from_git():
                 logger.info(f"📈 Statistics: {total_trades} total, {profitable_trades} profitable")
                 logger.info(f"💰 Balance from trades: ${balance:.2f}")
                 logger.info(f"🎯 Next trade ID will be: T{next_trade_id}")
+                logger.info(f"🤖 Loaded {len(ml_features)} ML feature sets from trades")
         
         # Also load state file if exists
         if os.path.exists(STATE_FILE) and os.path.getsize(STATE_FILE) > 0:
@@ -608,8 +623,8 @@ def calculate_advanced_indicators(prices):
         df['overbought'] = (df['rsi'] > 70).astype(int)
         df['oversold'] = (df['rsi'] < 30).astype(int)
         
-        # Fill NaN values
-        df = df.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        # Fill NaN values - FIXED: Use ffill() and bfill() methods instead of deprecated 'method' parameter
+        df = df.ffill().bfill().fillna(0)
         
         return df
         
@@ -633,9 +648,6 @@ def initialize_ml_system():
     ml_fully_trained_on_startup = True
     logger.info("✅ ML system fully trained with ALL historical trades before making any predictions")
     
-    # Extract features from historical trades (for future retraining)
-    extract_features_from_trades()
-    
     # Train ML if we have enough data (should already be trained from above)
     if len(ml_features) >= 10:
         if not ml_trained:  # If somehow not trained yet
@@ -650,141 +662,50 @@ def initialize_ml_system():
 
 def train_ml_with_all_trades():
     """NEW: Train ML models with ALL historical trades from Git repo"""
-    global tp_model, sl_model, ml_scaler, ml_trained, ml_features, tp_labels, sl_labels
+    global tp_model, sl_model, ml_scaler, ml_trained
     
-    if len(trade_history) == 0:
-        logger.info("📭 No historical trades found in Git repo for ML training")
+    if len(ml_features) < 3:  # Need at least 3 samples
+        logger.info("⚠️  Not enough ML features for training")
         ml_trained = False
         trading_state['ml_model_ready'] = False
         return
     
-    # Clear existing training data
-    ml_features = []
-    tp_labels = []
-    sl_labels = []
-    
-    logger.info(f"🧠 Training ML with ALL {len(trade_history)} historical trades from Git...")
-    
-    # Extract features from ALL trades
-    successful_trades = 0
-    failed_trades = 0
-    
-    for trade in trade_history:
-        if trade.get('status') != 'CLOSED' or trade.get('result') not in ['SUCCESS', 'FAILED', 'PARTIAL_SUCCESS', 'PARTIAL_FAIL', 'SUCCESS_FAST']:
-            continue
+    try:
+        X = np.array(ml_features)
+        y_tp = np.array(tp_labels)
+        y_sl = np.array(sl_labels)
         
-        # Extract features from trade data
-        try:
-            features = [
-                trade.get('confidence', 50) / 100,
-                trade.get('signal_strength', 1) / 3,
-                trade.get('volatility', 0.00015) * 10000,
-                1 if trade.get('action') == 'BUY' else 0,
-                trade.get('entry_price', 1.0850),
-                trade.get('tp_distance_pips', 10) / 100,
-                trade.get('sl_distance_pips', 10) / 100,
-                trade.get('duration_seconds', 120) / 120,
-                trade.get('max_profit_pips', 0) / 100,
-                trade.get('max_loss_pips', 0) / 100,
-                # Add market condition features
-                1 if trade.get('result') in ['SUCCESS', 'SUCCESS_FAST', 'PARTIAL_SUCCESS'] else 0,
-                trading_state['win_rate'] / 100
-            ]
+        # Scale features
+        X_scaled = ml_scaler.fit_transform(X)
+        
+        # Train TP model - FOCUS ON HITTING TP BEFORE 2 MINUTES
+        tp_model.fit(X_scaled, y_tp)
+        
+        # Train SL model - FOCUS ON PREVENTING SL HIT
+        sl_model.fit(X_scaled, y_sl)
+        
+        ml_trained = True
+        trading_state['ml_model_ready'] = True
+        
+        # Analyze training results
+        logger.info(f"🎯 ML TRAINED WITH ALL HISTORICAL DATA:")
+        logger.info(f"   ML training samples: {len(ml_features)}")
+        logger.info(f"   Features per sample: {len(ml_features[0]) if ml_features else 0}")
+        logger.info(f"   Primary goal: Hit TP BEFORE 2 minutes")
+        logger.info(f"   Secondary goal: Avoid SL at all costs")
+        
+        # Show sample predictions
+        if len(X) >= 3:
+            tp_predictions = tp_model.predict(X_scaled[:3])
+            sl_predictions = sl_model.predict(X_scaled[:3])
+            logger.info(f"   Sample TP predictions: {tp_predictions}")
+            logger.info(f"   Sample SL predictions: {sl_predictions}")
+            logger.info(f"   Goal: TP hit in <{CYCLE_SECONDS} seconds, SL avoided")
             
-            # Add features to ML training set
-            ml_features.append(features)
-            
-            # Determine optimal TP/SL based on trade result - FOCUS ON HITTING TP FAST
-            if trade['result'] == 'SUCCESS_FAST':  # TP hit in first half
-                # Perfect! Keep similar settings for FAST TP hits
-                optimal_tp = trade.get('tp_distance_pips', 10)
-                optimal_sl = trade.get('sl_distance_pips', 10) * 0.9
-                successful_trades += 1
-                
-            elif trade['result'] == 'SUCCESS':  # TP hit but took time
-                # Good, but could be faster - make TP smaller
-                optimal_tp = trade.get('tp_distance_pips', 10) * 0.9
-                optimal_sl = trade.get('sl_distance_pips', 10) * 1.1
-                successful_trades += 1
-                
-            elif trade['result'] == 'PARTIAL_FAIL':  # Time ended with profit but TP not hit
-                # Need much smaller TP for faster hits
-                optimal_tp = trade.get('tp_distance_pips', 10) * 0.7
-                optimal_sl = trade.get('sl_distance_pips', 10) * 0.8
-                failed_trades += 1
-                
-            elif trade['result'] == 'FAILED':  # SL hit or ended with loss
-                # TP was too far, SL was too tight
-                optimal_tp = trade.get('tp_distance_pips', 10) * 0.6
-                optimal_sl = trade.get('sl_distance_pips', 10) * 1.5
-                failed_trades += 1
-                
-            else:  # PARTIAL_SUCCESS or other
-                optimal_tp = trade.get('tp_distance_pips', 10) * 0.8
-                optimal_sl = trade.get('sl_distance_pips', 10) * 1.0
-                successful_trades += 1
-            
-            tp_labels.append(optimal_tp)
-            sl_labels.append(optimal_sl)
-            
-        except Exception as e:
-            logger.warning(f"Could not extract features from trade: {e}")
-            continue
-    
-    # Train ML models with ALL extracted data
-    if len(ml_features) >= 3:  # Need at least 3 samples
-        try:
-            X = np.array(ml_features)
-            y_tp = np.array(tp_labels)
-            y_sl = np.array(sl_labels)
-            
-            # Scale features
-            X_scaled = ml_scaler.fit_transform(X)
-            
-            # Train TP model - FOCUS ON HITTING TP BEFORE 2 MINUTES
-            tp_model.fit(X_scaled, y_tp)
-            
-            # Train SL model - FOCUS ON PREVENTING SL HIT
-            sl_model.fit(X_scaled, y_sl)
-            
-            ml_trained = True
-            trading_state['ml_model_ready'] = True
-            
-            # Analyze training results
-            logger.info(f"🎯 ML TRAINED WITH ALL HISTORICAL DATA:")
-            logger.info(f"   Total trades analyzed: {len(trade_history)}")
-            logger.info(f"   ML training samples: {len(ml_features)}")
-            logger.info(f"   Successful trades: {successful_trades}")
-            logger.info(f"   Failed trades: {failed_trades}")
-            logger.info(f"   Primary goal: Hit TP BEFORE 2 minutes")
-            logger.info(f"   Secondary goal: Avoid SL at all costs")
-            logger.info(f"   Will NEVER settle - always adjusting for faster TP hits")
-            
-            # Show sample predictions
-            if len(X) >= 5:
-                tp_predictions = tp_model.predict(X_scaled[:3])
-                sl_predictions = sl_model.predict(X_scaled[:3])
-                logger.info(f"   Sample TP predictions: {tp_predictions}")
-                logger.info(f"   Sample SL predictions: {sl_predictions}")
-                logger.info(f"   Goal: TP hit in <{CYCLE_SECONDS} seconds, SL avoided")
-            
-        except Exception as e:
-            logger.error(f"ML training error: {e}")
-            ml_trained = False
-            trading_state['ml_model_ready'] = False
-    else:
-        logger.info("⚠️  Not enough historical trades for ML training")
+    except Exception as e:
+        logger.error(f"ML training error: {e}")
         ml_trained = False
         trading_state['ml_model_ready'] = False
-
-def extract_features_from_trades():
-    """Extract ML features from trade history"""
-    global ml_features, tp_labels, sl_labels
-    
-    # Don't clear features here - we already extracted them in train_ml_with_all_trades()
-    # Just update the existing features if needed
-    
-    logger.info(f"📊 ML has {len(ml_features)} samples from historical trades")
 
 def train_ml_models():
     """Train ML models for TP/SL optimization with focus on hitting TP before 2 minutes"""
@@ -813,7 +734,7 @@ def train_ml_models():
         trading_state['ml_model_ready'] = True
         
         # Analyze model performance
-        if len(X) >= 5:
+        if len(X) >= 3:
             tp_predictions = tp_model.predict(X_scaled[:3])
             sl_predictions = sl_model.predict(X_scaled[:3])
             logger.info(f"🤖 ML models retrained on {len(X)} samples")
@@ -860,6 +781,20 @@ def extract_ml_features(df, current_price):
     # Add price level
     features.append(current_price)
     
+    # Add trade decision features (12 more to make 22 total)
+    features.append(trading_state['confidence'] / 100)  # 11
+    features.append(trading_state['signal_strength'] / 3)  # 12
+    features.append(price_cache.get('atr', 0.00015) * 10000)  # 13
+    features.append(1 if trading_state['action'] == 'BUY' else 0)  # 14
+    features.append(current_price)  # 15 (duplicate, but for consistency)
+    features.append(trading_state['tp_distance_pips'] / 100)  # 16
+    features.append(trading_state['sl_distance_pips'] / 100)  # 17
+    features.append(0)  # 18: duration placeholder
+    features.append(0)  # 19: max profit placeholder
+    features.append(0)  # 20: max loss placeholder
+    features.append(0)  # 21: result placeholder
+    features.append(trading_state['win_rate'] / 100)  # 22
+    
     return features
 
 def predict_optimal_levels(features, direction, current_price, df):
@@ -877,7 +812,7 @@ def predict_optimal_levels(features, direction, current_price, df):
         base_sl = current_price
     
     # Use ML predictions if available
-    if ml_trained and features is not None:
+    if ml_trained and features is not None and len(features) == 22:
         try:
             X_scaled = ml_scaler.transform([features])
             
@@ -1052,6 +987,13 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
     trade_id = f"T{next_trade_id}"
     next_trade_id += 1  # Increment for next trade
     
+    # Create price series for analysis to extract market indicators
+    price_series = create_price_series(current_price, 120)
+    df_indicators = calculate_advanced_indicators(price_series)
+    
+    # Extract the 22 ML features at trade entry
+    ml_features_at_entry = extract_ml_features(df_indicators, current_price)
+    
     trade = {
         'id': trade_id,
         'cycle': trading_state['cycle_count'],
@@ -1081,7 +1023,10 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
         'ml_training_samples': len(ml_features),
         'volatility': price_cache.get('atr', 0.00015),
         'win_rate': trading_state['win_rate'],
-        'git_pushed': False
+        'git_pushed': False,
+        'ml_features': ml_features_at_entry,  # Store the 22 features
+        'optimal_tp_learned': None,  # Will be filled when trade closes
+        'optimal_sl_learned': None   # Will be filled when trade closes
     }
     
     trading_state['current_trade'] = trade
@@ -1100,6 +1045,7 @@ def execute_2min_trade(direction, confidence, current_price, optimal_tp, optimal
     logger.info(f"   Goal: Hit TP in <2min, avoid SL completely")
     logger.info(f"   ML Used: {ml_trained} ({len(ml_features)} samples)")
     logger.info(f"   ML Fully Trained on Startup: {ml_fully_trained_on_startup}")
+    logger.info(f"   ML Features Saved: {len(ml_features_at_entry) if ml_features_at_entry else 0}")
     
     return trade
 
@@ -1232,25 +1178,9 @@ def learn_from_trade(trade):
         if 'result' not in trade or trade['result'] == 'PENDING':
             return
         
-        # Extract features from trade data
-        features = [
-            trade['confidence'] / 100,
-            trade.get('signal_strength', 1) / 3,
-            trade.get('volatility', 0.00015) * 10000,
-            1 if trade['action'] == 'BUY' else 0,
-            trade['entry_price'],
-            trade['tp_distance_pips'] / 100,
-            trade['sl_distance_pips'] / 100,
-            trade['duration_seconds'] / 120,
-            trade['max_profit_pips'] / 100,
-            trade['max_loss_pips'] / 100,
-            1 if trade['result'] in ['SUCCESS', 'SUCCESS_FAST'] else 0,
-            trading_state['win_rate'] / 100
-        ]
-        
         # Determine optimal TP/SL based on result - AGGRESSIVE LEARNING
         if trade['result'] == 'SUCCESS_FAST':  # TP hit in first half
-            # Perfect! Keep similar settings
+            # Perfect! Keep similar settings for FAST TP hits
             optimal_tp = trade['tp_distance_pips']
             optimal_sl = trade['sl_distance_pips'] * 0.9  # Even tighter SL
             logger.info(f"🎯 PERFECT TRADE! TP hit fast. Keeping settings.")
@@ -1277,19 +1207,25 @@ def learn_from_trade(trade):
             optimal_tp = trade['tp_distance_pips'] * 0.8
             optimal_sl = trade['sl_distance_pips'] * 1.0
         
-        # Add to training data
-        ml_features.append(features)
-        tp_labels.append(optimal_tp)
-        sl_labels.append(optimal_sl)
+        # Update the trade with learned values
+        trade['optimal_tp_learned'] = optimal_tp
+        trade['optimal_sl_learned'] = optimal_sl
+        
+        # Add to ML training data if we have the features
+        if 'ml_features' in trade and trade['ml_features'] and len(trade['ml_features']) == 22:
+            ml_features.append(trade['ml_features'])
+            tp_labels.append(optimal_tp)
+            sl_labels.append(optimal_sl)
+            
+            logger.info(f"📚 ML learned from trade #{trade.get('id', 'N/A')}: {trade['result']}")
+            logger.info(f"   New target: TP={optimal_tp:.1f}pips, SL={optimal_sl:.1f}pips")
+            logger.info(f"   Features added: {len(trade['ml_features'])}")
         
         # NEW: Retrain ML after every 3 trades (as specified)
         if len(ml_features) >= 3 and len(ml_features) % 3 == 0:
             logger.info(f"🔄 RETRAINING ML: {len(ml_features)} samples available")
             train_ml_models()
             logger.info(f"✅ ML retrained with focus on hitting TP before {CYCLE_SECONDS} seconds")
-        
-        logger.info(f"📚 ML learned from trade #{trade.get('id', 'N/A')}: {trade['result']}")
-        logger.info(f"   New target: TP={optimal_tp:.1f}pips, SL={optimal_sl:.1f}pips")
         
     except Exception as e:
         logger.error(f"Learning error: {e}")
@@ -1569,8 +1505,9 @@ def start_trading_bot():
         print(f"✅ Git Push: {'ENABLED' if trading_state['git_push_enabled'] else 'DISABLED'}")
         print(f"✅ Trade Counting: CONTINUES from Git after sleep/wake")
         print(f"✅ Next Trade ID: T{next_trade_id}")
-        print(f"✅ ML Training: ALL historical data on startup")
+        print(f"✅ ML Training: ALL historical data on startup from Git")
         print(f"✅ ML Retraining: After every 3 trades")
+        print(f"✅ ML Features: 22 features stored with each trade")
         print(f"✅ ML Focus: Hit TP BEFORE {CYCLE_SECONDS} seconds")
         print(f"✅ Trade data saved to: data/trades.json in Git")
         print(f"✅ Repo: {GITHUB_REPO_URL}")
@@ -1593,6 +1530,7 @@ if __name__ == '__main__':
     print(f"• Next trade will be: T{next_trade_id}")
     print(f"• ML training: ALL historical data on startup from Git")
     print(f"• ML retraining: After every 3 trades")
+    print(f"• ML features: 22 features (10 market + 12 trade) stored with each trade")
     print(f"• ML focus: Hit TP BEFORE {CYCLE_SECONDS} seconds, everything else = FAILURE")
     print(f"• Pulling trade data from: {GITHUB_REPO_URL}")
     print(f"• Pushing trade data after each trade")
