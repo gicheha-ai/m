@@ -1,8 +1,8 @@
 {
-  "last_updated": "2026-01-30T12:27:06.215001",
-  "total_trades": 2,
+  "last_updated": "2026-01-30T12:31:07.211482",
+  "total_trades": 4,
   "balance": 10000.0,
   "win_rate": 0.0,
   "ml_model_ready": false,
-  "ml_training_samples": 0
+  "ml_training_samples": 1
 }
