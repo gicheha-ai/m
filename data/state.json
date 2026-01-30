@@ -1,8 +1,8 @@
 {
-  "last_updated": "2026-01-30T11:45:14.343031",
-  "total_trades": 6,
-  "balance": 10111.795912871248,
-  "win_rate": 33.33333333333333,
+  "last_updated": "2026-01-30T12:27:06.215001",
+  "total_trades": 2,
+  "balance": 10000.0,
+  "win_rate": 0.0,
   "ml_model_ready": false,
-  "ml_training_samples": 2
+  "ml_training_samples": 0
 }
