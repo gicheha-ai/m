@@ -302,6 +302,120 @@ def save_all_data_local():
 
 # ==================== GIT PUSH FUNCTIONS USING ACTUAL GIT COMMANDS ====================
 def setup_git_for_push():
+# Add this function right after the setup_git_for_push() function (around line 200)
+
+# ==================== PRICE FETCHING FUNCTIONS ====================
+def get_cached_eurusd_price():
+    """Get EUR/USD price with 30-second caching"""
+    global price_cache
+    
+    current_time = time.time()
+    
+    # Return cached price if still valid
+    if current_time - price_cache['timestamp'] < price_cache['expiry']:
+        price_cache['hits'] += 1
+        trading_state['cache_hits'] = price_cache['hits']
+        trading_state['cache_efficiency'] = f"{int((price_cache['hits']/(price_cache['hits']+price_cache['misses']+0.001))*100)}%"
+        return price_cache['price'], f"Cached ({price_cache['source']})"
+    
+    # Cache expired, get new price
+    price_cache['misses'] += 1
+    trading_state['cache_misses'] = price_cache['misses']
+    trading_state['cache_efficiency'] = f"{int((price_cache['hits']/(price_cache['hits']+price_cache['misses']+0.001))*100)}%"
+    
+    try:
+        # Try to get real price from API
+        trading_state['api_status'] = 'CONNECTING'
+        
+        # Option 1: Try FX market API
+        try:
+            response = requests.get(
+                "https://api.fxratesapi.com/latest?base=EUR&symbols=USD",
+                timeout=5
+            )
+            if response.status_code == 200:
+                data = response.json()
+                price = float(data['rates']['USD'])
+                source = 'FX Rates API'
+                trading_state['api_status'] = 'CONNECTED'
+                trading_state['is_demo_data'] = False
+            else:
+                raise Exception(f"API error: {response.status_code}")
+        except Exception as e1:
+            logger.warning(f"FX API failed: {e1}")
+            
+            # Option 2: Try financial data API
+            try:
+                response = requests.get(
+                    "https://api.twelvedata.com/price?symbol=EUR/USD&apikey=demo",
+                    timeout=5
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    price = float(data['price'])
+                    source = 'Twelve Data API'
+                    trading_state['api_status'] = 'CONNECTED'
+                    trading_state['is_demo_data'] = False
+                else:
+                    raise Exception(f"API error: {response.status_code}")
+            except Exception as e2:
+                logger.warning(f"Financial API failed: {e2}")
+                
+                # Option 3: Fallback to simulated price
+                # Add slight random movement to previous price
+                previous_price = price_cache['price']
+                movement = np.random.normal(0, 0.0002)  # Small random walk
+                price = previous_price + movement
+                
+                # Keep within realistic EUR/USD range
+                price = max(1.0500, min(1.1200, price))
+                
+                source = 'Simulated'
+                trading_state['api_status'] = 'OFFLINE (SIMULATED)'
+                trading_state['is_demo_data'] = True
+        
+        # Update cache
+        price_cache['price'] = round(price, 5)
+        price_cache['timestamp'] = current_time
+        price_cache['source'] = source
+        price_cache['expiry'] = CACHE_DURATION
+        
+        return price_cache['price'], source
+        
+    except Exception as e:
+        logger.error(f"❌ Price fetching error: {e}")
+        # Return cached price even if expired
+        return price_cache['price'], f"Error: Using cached ({price_cache['source']})"
+
+
+def create_price_series(current_price, periods=120):
+    """Create a realistic price series for analysis"""
+    np.random.seed(int(time.time()))
+    
+    # Generate realistic price movements
+    base_prices = [current_price]
+    for i in range(periods - 1):
+        movement = np.random.normal(0, 0.00015)  # Small daily volatility
+        new_price = base_prices[-1] + movement
+        base_prices.append(new_price)
+    
+    # Add some micro-trends
+    prices = np.array(base_prices)
+    
+    # Add small sine wave for seasonality
+    t = np.arange(periods)
+    seasonal = 0.0001 * np.sin(2 * np.pi * t / 30)  # 30-period seasonality
+    
+    # Add noise
+    noise = np.random.normal(0, 0.00005, periods)
+    
+    final_prices = prices + seasonal + noise
+    
+    # Ensure all prices are positive
+    final_prices = np.maximum(final_prices, current_price * 0.99)
+    final_prices = np.minimum(final_prices, current_price * 1.01)
+    
+    return pd.Series(final_prices, name='price')
     """Setup Git repository for pushing using actual Git commands"""
     try:
         if not GITHUB_TOKEN:
