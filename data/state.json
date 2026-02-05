@@ -1,11 +1,11 @@
 {
-  "last_updated": "2026-02-05T01:27:53.000960",
-  "total_trades": 349,
+  "last_updated": "2026-02-05T01:31:53.901969",
+  "total_trades": 350,
   "profitable_trades": 11,
   "balance": 9846.785211350858,
   "total_profit": 219.79945274761303,
-  "win_rate": 3.151862464183381,
+  "win_rate": 3.1428571428571432,
   "ml_model_ready": true,
-  "ml_training_samples": 348,
-  "next_trade_id": 350
+  "ml_training_samples": 349,
+  "next_trade_id": 351
 }
